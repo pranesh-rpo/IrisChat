@@ -101,7 +101,7 @@ def get_groq_response_sync(user_text, history):
         messages.append({"role": "user", "content": user_text})
 
         completion = ai_client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             messages=messages,
             temperature=0.9,
             max_tokens=1024,
