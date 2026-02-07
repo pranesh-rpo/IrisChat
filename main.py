@@ -62,11 +62,19 @@ Goal: Make the chat fun and lively!
 MAX_HISTORY = 20  # Keep last 20 messages for context
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Reset history in DB
+    # Don't reset history on start/!iris anymore
+    # db.clear_history(update.effective_chat.id) 
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Hihi! ✨ I'm Iris! I'm so happy to be here! Let's chat! 💖\n(Type `!reset` to wipe my memory!)"
+    )
+
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Explicitly reset history
     db.clear_history(update.effective_chat.id)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Hihi! ✨ I'm Iris! I'm so happy to be here! Let's chat! 💖\n(Type `!iris` to reset me anytime!)"
+        text="Memory wiped! 🤯 I'm brand new again! ✨"
     )
 
 async def donate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -178,6 +186,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle !iris as a reset/start command
     if user_text.strip().lower() == "!iris":
         await start(update, context)
+        return
+
+    # Handle !reset
+    if user_text.strip().lower() == "!reset":
+        await reset(update, context)
         return
 
     # Handle !donate
