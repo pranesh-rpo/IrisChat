@@ -8,6 +8,7 @@ import google.generativeai as genai
 from groq import Groq
 import qrcode
 import io
+import db  # Import database module
 
 # Load environment variables
 load_dotenv()
@@ -56,14 +57,13 @@ Traits:
 Goal: Make the chat fun and lively!
 """
 
-# History management (Unified format: list of dicts {"role": "user"|"assistant", "content": "..."})
-# Keyed by chat_id
-chat_histories = {}
-MAX_HISTORY = 20  # Keep last 20 messages to save tokens
+# History management
+# We now use db.py for persistent storage
+MAX_HISTORY = 20  # Keep last 20 messages for context
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Reset history on start
-    chat_histories[update.effective_chat.id] = []
+    # Reset history in DB
+    db.clear_history(update.effective_chat.id)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="Hihi! ✨ I'm Iris! I'm so happy to be here! Let's chat! 💖\n(Type `!iris` to reset me anytime!)"
@@ -138,11 +138,9 @@ async def get_ai_response(chat_id, user_text):
     if not ai_client:
         return "I need my API key to think! 😵‍💫 (Check .env)"
 
-    # Get or initialize history
-    if chat_id not in chat_histories:
-        chat_histories[chat_id] = []
+    # Get history from DB
+    history = db.get_history(chat_id, limit=MAX_HISTORY)
     
-    history = list(chat_histories[chat_id]) # Copy for safety
     reply = None
 
     if AI_PROVIDER == "groq":
@@ -152,13 +150,9 @@ async def get_ai_response(chat_id, user_text):
         reply = await get_gemini_response(user_text, history)
     
     if reply:
-        # Update shared history
-        chat_histories[chat_id].append({"role": "user", "content": user_text})
-        chat_histories[chat_id].append({"role": "assistant", "content": reply})
-        
-        # Trim history
-        if len(chat_histories[chat_id]) > MAX_HISTORY:
-            chat_histories[chat_id] = chat_histories[chat_id][-MAX_HISTORY:]
+        # Save interaction to DB
+        db.add_message(chat_id, "user", user_text)
+        db.add_message(chat_id, "assistant", reply)
     else:
         reply = "Oopsie! My brain short-circuited... 🥺"
 
@@ -206,6 +200,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 if __name__ == '__main__':
+    # Initialize Database
+    db.init_db()
+
     if not TELEGRAM_TOKEN:
         print("Error: TELEGRAM_BOT_TOKEN not found in .env file.")
         print("Please copy .env.example to .env and fill in your tokens.")
