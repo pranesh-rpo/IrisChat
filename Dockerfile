@@ -4,13 +4,8 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1
 
 # Install system dependencies
-# ffmpeg is CRITICAL for the Music Bot features
-# build-essential and cmake are needed for compiling tgcrypto/tgcalls if wheels are missing
 RUN apt-get update && apt-get install -y \
-    ffmpeg \
     git \
-    build-essential \
-    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -15,7 +15,6 @@ import io
 import db  # Import database module
 import random # For fun features
 import requests
-from music_engine import MusicPlayer
 
 # Load environment variables
 load_dotenv()
@@ -25,9 +24,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 UPI_ID = os.getenv("UPI_ID", "your-upi-id@okhdfcbank") # Default or from env
-
-# Initialize Music Player
-music_player = MusicPlayer()
 
 # Logging setup
 logging.basicConfig(
@@ -378,43 +374,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message_id=update.message.message_id
         )
 
-# --- Music Commands ---
-async def play_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if not context.args:
-        try:
-            await context.bot.send_message(chat_id=chat_id, text="🎵 Usage: `!play <song name>`")
-        except Exception as e:
-            logging.error(f"Failed to send help message: {e}")
-        return
-    
-    query = " ".join(context.args)
-    
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=f"🔍 Searching for '{query}'...")
-    except Exception as e:
-        logging.error(f"Failed to send search status: {e}")
-        # Continue anyway, as the play command might still work
-    
-    result = await music_player.play(chat_id, query)
-    
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=result, parse_mode='Markdown')
-    except Exception as e:
-        logging.error(f"Failed to send play result: {e}")
-
-async def stop_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    result = await music_player.stop(update.effective_chat.id)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=result)
-
-async def pause_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    result = await music_player.pause(update.effective_chat.id)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=result)
-
-async def resume_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    result = await music_player.resume(update.effective_chat.id)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=result)
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
 ✨ **Iris - Your Cute AI Bestie!** ✨
@@ -424,11 +383,6 @@ Here are the things I can do:
 🤖 **Chatting**
 - Just mention `Iris` or reply to me to chat!
 - In DMs, I'm always listening! 💖
-
-🎵 **Music Bot** (Beta)
-- `!play <song>`: Join VC and play music.
-- `!stop`: Stop music and leave VC.
-- `!pause` / `!resume`: Control playback.
 
 🎭 **Roleplay & Fun**
 - `!roleplay <scenario>`: I'll act out any character/scenario you want!
@@ -448,10 +402,6 @@ Let's have fun! 🌸
 """
     await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
 
-async def post_init(application):
-    """Start the music player on bot startup."""
-    await music_player.start()
-
 if __name__ == '__main__':
     # Initialize Database
     db.init_db()
@@ -462,7 +412,7 @@ if __name__ == '__main__':
     else:
         # Increase connection timeouts to handle slow networks/server lag
         request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
-        application = ApplicationBuilder().token(TELEGRAM_TOKEN).request(request).post_init(post_init).build()
+        application = ApplicationBuilder().token(TELEGRAM_TOKEN).request(request).build()
         
         start_handler = CommandHandler('start', start)
         msg_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
@@ -474,12 +424,6 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('dare', game_dare))
         application.add_handler(CommandHandler('trivia', game_trivia))
         application.add_handler(CommandHandler('help', help_command))
-
-        # Music Handlers
-        application.add_handler(CommandHandler('play', play_music))
-        application.add_handler(CommandHandler('stop', stop_music))
-        application.add_handler(CommandHandler('pause', pause_music))
-        application.add_handler(CommandHandler('resume', resume_music))
 
         application.add_handler(start_handler)
         application.add_handler(msg_handler)

@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["python311", "ffmpeg", "gcc", "cmake", "git", "gnumake"]
+nixPkgs = ["python311", "git"]
 
 [phases.install]
 cmds = [

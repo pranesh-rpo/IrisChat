@@ -4,7 +4,3 @@ python-dotenv
 qrcode
 Pillow
 groq
-pyrogram
-pytgcalls==3.0.0.dev24
-yt-dlp
-tgcrypto

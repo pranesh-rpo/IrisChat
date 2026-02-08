@@ -6,10 +6,14 @@ IrisChat is a charming, AI-driven Telegram chatbot designed for group chats. She
 - 💖 **Charming Personality**: Iris is designed to be cute, enthusiastic, and friendly (like "Cutie" bots).
 - 🧠 **AI-Powered**: Supports **Google Gemini Pro** or **Groq** (Llama 3, Mixtral) for intelligent responses.
 - 💬 **Group Chat Ready**: Responds to mentions, replies, and `!iris` commands.
+- 🎭 **Roleplay Mode**: Can act as any character (`!roleplay <scenario>`).
+- 🎲 **Mini-Games**: Built-in Truth, Dare, and Trivia games.
 - 💸 **Donations**: Built-in UPI QR code generator (`!donate`) to accept support.
 
 ## How to Use
 - **Start/Reset**: Type `!iris` in the chat to wake her up or reset the conversation.
+- **Roleplay**: Type `!roleplay <scenario>` (e.g., `!roleplay You are a cat`) to start. Type `!normal` to stop.
+- **Games**: Type `!truth`, `!dare`, or `!trivia` for fun!
 - **Donate**: Type `!donate` to see a UPI QR code.
 - **Chat**: Just mention her, reply to her, or say "Iris" in your sentence!
 
