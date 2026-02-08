@@ -78,7 +78,7 @@ fi
 
 echo "$LISTEN_OUTPUT"
 
-if echo "$LISTEN_OUTPUT" | grep -q "0.0.0.0:11434"; then
+if echo "$LISTEN_OUTPUT" | grep -qE "(0\.0\.0\.0|\*):11434"; then
     echo ""
     echo "SUCCESS! Ollama is listening on 0.0.0.0:11434"
     echo "Set OLLAMA_BASE_URL=http://172.17.0.1:11434 in Coolify and redeploy."
