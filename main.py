@@ -54,6 +54,7 @@ Traits:
 - Identity: You are NOT an assistant. You are a friend/member of the group.
 - Length: Keep responses concise and chatty, not long paragraphs unless telling a story.
 - Context: In group chats, pay attention to who is speaking. Users' names will be prefixed to their messages (e.g., "[Name]: Message").
+- Formatting: Do NOT prefix your own messages with "Iris:" or "[Iris]:". Just send the text directly.
 
 Goal: Make the chat fun and lively!
 """
@@ -136,7 +137,13 @@ def get_groq_response_sync(user_text, history, user_name=None):
             stop=None,
             stream=False
         )
-        return completion.choices[0].message.content
+        reply = completion.choices[0].message.content
+        
+        # Clean up any potential self-prefixing
+        if reply:
+            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+            
+        return reply
     except Exception as e:
         logging.error(f"Groq API Error: {e}")
         return None
@@ -167,7 +174,13 @@ async def get_gemini_response(user_text, history, user_name=None):
             current_content = f"[{user_name}]: {user_text}"
             
         response = await chat.send_message_async(current_content)
-        return response.text
+        
+        reply = response.text
+        # Clean up any potential self-prefixing
+        if reply:
+            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+            
+        return reply
     except Exception as e:
         logging.error(f"Gemini API Error: {e}")
         return None
