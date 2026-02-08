@@ -41,7 +41,6 @@ logging.info(f"🚀 Iris is starting...")
 logging.info(f"📂 CWD: {os.getcwd()}")
 logging.info(f"🌍 OLLAMA_BASE_URL: {OLLAMA_BASE_URL}")
 logging.info(f"🧠 OLLAMA_MODEL: {OLLAMA_MODEL}")
-logging.info(f"🤖 AI_PROVIDER Check: {AI_PROVIDER}")
 
 # AI Client Setup
 ai_client = None
@@ -73,6 +72,8 @@ if not AI_PROVIDER:
         logging.info("Using Gemini API as AI provider.")
     else:
         logging.warning("No AI API key found (OLLAMA, GEMINI, or GROQ). AI features will not work.")
+
+logging.info(f"✅ Final AI Provider: {AI_PROVIDER}")
 
 # Personality System Prompts
 SYSTEM_PROMPT_DM = """
