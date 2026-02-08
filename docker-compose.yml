@@ -1,0 +1,16 @@
+services:
+  iris:
+    build: .
+    container_name: irischat
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./chat_history.db:/app/chat_history.db
+    # Network Mode: Host
+    # This is BEST for Linux VPS. It allows the container to share the host's network stack.
+    # This means "localhost" in the container IS "localhost" on the VPS.
+    # So it can access Ollama running on the host at http://localhost:11434 easily.
+    network_mode: "host"
+    environment:
+      - OLLAMA_BASE_URL=http://localhost:11434

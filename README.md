@@ -35,7 +35,28 @@ IrisChat is a charming, AI-driven Telegram chatbot designed for group chats. She
         - `GEMINI_API_KEY`: Get this from [Google AI Studio](https://makersuite.google.com/app/apikey).
     - *Note: If both keys are present, Iris will prefer Groq.*
 
-## Running Iris (Locally)
+## 🚀 Deployment (VPS / Linux)
+
+The easiest way to run Iris on a VPS (like DigitalOcean, AWS, Linode) with local Ollama support.
+
+1. **Upload Code**: Clone this repo to your VPS.
+2. **Run Setup Script**:
+   ```bash
+   chmod +x setup_vps.sh
+   ./setup_vps.sh
+   ```
+   This script will:
+   - Install Docker & Ollama.
+   - Pull the `gemma2:2b` AI model.
+   - Ask for your Telegram Token.
+   - Start the bot in background.
+
+3. **Manual Docker Start**:
+   ```bash
+   docker-compose up --build -d
+   ```
+
+## 🛠️ Local Development (Mac/Windows)
 
 1.  **Create and Activate Virtual Environment**:
     ```bash

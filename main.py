@@ -15,6 +15,7 @@ import io
 import db  # Import database module
 import random # For fun features
 import requests
+import economy # Economy commands
 
 # Load environment variables
 load_dotenv()
@@ -24,6 +25,10 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 UPI_ID = os.getenv("UPI_ID", "your-upi-id@okhdfcbank") # Default or from env
+
+# Ollama Config
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma2:2b") # Default to gemma2:2b if not set
 
 # Logging setup
 logging.basicConfig(
@@ -35,17 +40,32 @@ logging.basicConfig(
 ai_client = None
 AI_PROVIDER = None
 
-if GROQ_API_KEY:
-    AI_PROVIDER = "groq"
-    ai_client = Groq(api_key=GROQ_API_KEY)
-    logging.info("Using Groq API as AI provider.")
-elif GEMINI_API_KEY:
-    AI_PROVIDER = "gemini"
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_client = genai.GenerativeModel('gemini-pro')
-    logging.info("Using Gemini API as AI provider.")
-else:
-    logging.warning("No AI API key found (GEMINI_API_KEY or GROQ_API_KEY). AI features will not work.")
+# Prioritize Ollama if configured (assumed if env vars are present or user requested)
+# Check if we can reach Ollama
+try:
+    logging.info(f"Checking Ollama connection at {OLLAMA_BASE_URL}...")
+    # Simple check to see if Ollama is running
+    _resp = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=2)
+    if _resp.status_code == 200:
+        AI_PROVIDER = "ollama"
+        logging.info(f"Using Ollama ({OLLAMA_MODEL}) as AI provider.")
+    else:
+        logging.warning("Ollama is not responding. Falling back to Cloud APIs.")
+except Exception as e:
+    logging.warning(f"Ollama connection failed ({e}). Falling back to Cloud APIs.")
+
+if not AI_PROVIDER:
+    if GROQ_API_KEY:
+        AI_PROVIDER = "groq"
+        ai_client = Groq(api_key=GROQ_API_KEY)
+        logging.info("Using Groq API as AI provider.")
+    elif GEMINI_API_KEY:
+        AI_PROVIDER = "gemini"
+        genai.configure(api_key=GEMINI_API_KEY)
+        ai_client = genai.GenerativeModel('gemini-pro')
+        logging.info("Using Gemini API as AI provider.")
+    else:
+        logging.warning("No AI API key found (OLLAMA, GEMINI, or GROQ). AI features will not work.")
 
 # Personality System Prompts
 SYSTEM_PROMPT_DM = """
@@ -269,9 +289,60 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
         logging.error(f"Gemini API Error: {e}")
         return None
 
+def get_ollama_response_sync(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
+    try:
+        # Format history
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        for msg in history:
+            role = msg["role"]
+            content = msg["content"]
+            name = msg.get("sender_name")
+            
+            if role == "user" and name:
+                content = f"[{name}]: {content}"
+            
+            messages.append({"role": role, "content": content})
+            
+        current_content = user_text
+        if user_name:
+            current_content = f"[{user_name}]: {user_text}"
+            
+        messages.append({"role": "user", "content": current_content})
+        
+        payload = {
+            "model": OLLAMA_MODEL,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": 0.9,
+                "top_p": 0.9,
+            }
+        }
+        
+        response = requests.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        reply = result.get("message", {}).get("content", "")
+        
+        # Clean up
+        if reply:
+            reply = re.sub(r'^\[.*?\]:\s*', '', reply)
+            reply = re.sub(r'^\w+:\s*', '', reply)
+            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+            
+        return reply
+        
+    except Exception as e:
+        logging.error(f"Ollama API Error: {e}")
+        return None
+
 async def get_ai_response(chat_id, user_text, user_name=None, chat_type="group"):
-    if not ai_client:
-        return "I need my API key to think! 😵‍💫 (Check .env)"
+    # If no provider is set but we have a client (Groq/Gemini), it's fine.
+    # But if provider is Ollama, ai_client is None.
+    if not AI_PROVIDER:
+         return "I'm having trouble thinking right now. 😵‍💫 (No AI Provider)"
 
     # Get chat settings
     settings = db.get_chat_settings(chat_id)
@@ -305,6 +376,9 @@ CRITICAL RULES:
     if AI_PROVIDER == "groq":
         loop = asyncio.get_running_loop()
         reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history, user_name, system_prompt)
+    elif AI_PROVIDER == "ollama":
+        loop = asyncio.get_running_loop()
+        reply = await loop.run_in_executor(None, get_ollama_response_sync, user_text, history, user_name, system_prompt)
     elif AI_PROVIDER == "gemini":
         reply = await get_gemini_response(user_text, history, user_name, system_prompt)
     
@@ -384,6 +458,14 @@ Here are the things I can do:
 - Just mention `Iris` or reply to me to chat!
 - In DMs, I'm always listening! 💖
 
+💰 **Economy & Fun**
+- `!balance`: Check your wallet.
+- `!beg`: Beg for some loose change.
+- `!daily`: Claim your daily reward.
+- `!gamble <amount>`: Double or nothing!
+- `!pay <amount> <user>`: Pay a friend.
+- `!rich`: See the leaderboard.
+
 🎭 **Roleplay & Fun**
 - `!roleplay <scenario>`: I'll act out any character/scenario you want!
 - `!normal`: Switch me back to normal Iris mode.
@@ -395,7 +477,7 @@ Here are the things I can do:
 
 ⚙️ **Utilities**
 - `!reset`: Wipes my memory of our chat.
-- `!donate`: Support my server costs! 🥺
+- `!donate`: Support my server bills! 🥺
 - `!help`: Shows this message.
 
 Let's have fun! 🌸
@@ -424,6 +506,16 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('dare', game_dare))
         application.add_handler(CommandHandler('trivia', game_trivia))
         application.add_handler(CommandHandler('help', help_command))
+
+        # Economy Handlers
+        application.add_handler(CommandHandler('balance', economy.balance))
+        application.add_handler(CommandHandler('bal', economy.balance))
+        application.add_handler(CommandHandler('beg', economy.beg))
+        application.add_handler(CommandHandler('daily', economy.daily))
+        application.add_handler(CommandHandler('gamble', economy.gamble))
+        application.add_handler(CommandHandler('bet', economy.gamble))
+        application.add_handler(CommandHandler('pay', economy.pay))
+        application.add_handler(CommandHandler('rich', economy.leaderboard))
 
         application.add_handler(start_handler)
         application.add_handler(msg_handler)
