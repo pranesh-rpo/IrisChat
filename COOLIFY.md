@@ -24,7 +24,7 @@ You MUST set these variables in the **Environment Variables** tab:
 | Key | Value | Description |
 |-----|-------|-------------|
 | `TELEGRAM_BOT_TOKEN` | `123456:ABC-DEF...` | Your Telegram Bot Token. |
-| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | The bot will auto-try `172.17.0.1` if this fails. |
+| `OLLAMA_BASE_URL` | `http://172.17.0.1:11434` | **Recommended for Coolify**. Connects to host's Ollama. |
 | `OLLAMA_MODEL` | `gemma2:2b` | The model you pulled on the host. |
 | `PYTHONUNBUFFERED` | `1` | Ensures logs show up in Coolify. |
 

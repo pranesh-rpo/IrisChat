@@ -51,7 +51,7 @@ AI_PROVIDER = None
 def check_ollama(url):
     try:
         logging.info(f"Checking Ollama connection at {url}...")
-        resp = requests.get(f"{url}/api/tags", timeout=2)
+        resp = requests.get(f"{url}/api/tags", timeout=5)
         return resp.status_code == 200
     except Exception as e:
         logging.warning(f"Ollama connection failed for {url}: {e}")
