@@ -42,7 +42,12 @@ class MusicPlayer:
                 logger.error(f"Failed to initialize Music Player: {e}")
                 self.is_running = False
         else:
-            logger.warning("Music Player not initialized (Missing API_ID/HASH or dependencies)")
+            missing = []
+            if not MUSIC_AVAILABLE: missing.append("Dependencies (pytgcalls/pyrogram)")
+            if not self.api_id: missing.append("API_ID")
+            if not self.api_hash: missing.append("API_HASH")
+            logger.warning(f"Music Player not initialized. Missing: {', '.join(missing)}")
+            self.init_error = f"Missing: {', '.join(missing)}" if missing else "Unknown Error"
 
     async def start(self):
         """Start the Pyrogram client and PyTgCalls."""
@@ -85,7 +90,8 @@ class MusicPlayer:
     async def play(self, chat_id, query):
         """Play a song in the voice chat."""
         if not self.is_running:
-            return "❌ Music mode is currently unavailable. 😔"
+            error_reason = getattr(self, 'init_error', 'Check server logs')
+            return f"❌ Music mode is unavailable. ({error_reason})"
 
         song_info = await self.search_song(query)
         if not song_info:
