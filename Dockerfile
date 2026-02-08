@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Keep Python from buffering stdout and stderr to avoid missing logs in Coolify
+ENV PYTHONUNBUFFERED=1
+
 # Install system dependencies
 # ffmpeg is CRITICAL for the Music Bot features
 # build-essential and cmake are needed for compiling tgcrypto/tgcalls if wheels are missing
