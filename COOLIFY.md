@@ -18,42 +18,44 @@ Before clicking "Deploy", go to **Configuration**.
 - **Install Command**: `pip install -r requirements.txt`
 - **Start Command**: `python main.py`
 
-### 🔑 Environment Variables
-You MUST set these variables in the **Environment Variables** tab:
+### 3. Environment Variables
+Add these environment variables in Coolify:
 
-| Key | Value | Description |
-|-----|-------|-------------|
-| `TELEGRAM_BOT_TOKEN` | `123456:ABC-DEF...` | Your Telegram Bot Token. |
-| `OLLAMA_BASE_URL` | `http://172.17.0.1:11434` | **Recommended for Coolify**. Connects to host's Ollama. |
-| `OLLAMA_MODEL` | `gemma2:2b` | The model you pulled on the host. |
-| `PYTHONUNBUFFERED` | `1` | Ensures logs show up in Coolify. |
+| Variable | Value | Description |
+| :--- | :--- | :--- |
+| `TELEGRAM_BOT_TOKEN` | `your_bot_token` | From BotFather |
+| `GEMINI_API_KEY` | `your_gemini_key` | Optional (Backup AI) |
+| `GROQ_API_KEY` | `your_groq_key` | Optional (Backup AI) |
+| `OLLAMA_BASE_URL` | `http://172.17.0.1:11434` | **Docker bridge gateway (Recommended for Coolify).** The bot auto-detects fallbacks if this doesn't work. |
+| `OLLAMA_MODEL` | `gemma3:1b` | The model you want to use. |
+| `UPI_ID` | `your_upi` | For !pay command. |
 
-### ⚠️ Critical for Linux VPS: Bind Ollama to 0.0.0.0
-By default, Ollama only listens on `127.0.0.1` (localhost). This means it **ignores** requests from Docker containers.
-You **MUST** configure Ollama to listen on all interfaces.
+**Important Note on `OLLAMA_BASE_URL`:**
+- **Recommended**: Use `http://172.17.0.1:11434` (Docker bridge gateway). This is the most reliable way for a Coolify container to reach Ollama on the host.
+- **Alternative**: Use `http://YOUR_VPS_PUBLIC_IP:11434` (requires port 11434 open in firewall).
+- **Auto-Fallback**: The bot automatically tries multiple addresses (Docker gateway, `172.17.0.1`, `host.docker.internal`, `localhost`) if the configured URL fails.
 
-**Run this on your VPS terminal:**
-1.  Edit the service:
+---
+
+### 4. Important: Configure VPS Firewall (One-Time Setup)
+Since you are using the Public IP, you must open port `11434` on your VPS. We have a script for this.
+
+1.  **SSH into your VPS**:
     ```bash
-    systemctl edit ollama.service
+    ssh user@your-vps-ip
     ```
-2.  Add these lines in the editor that opens:
-    ```ini
-    [Service]
-    Environment="OLLAMA_HOST=0.0.0.0"
-    ```
-3.  Save (Ctrl+O) and Exit (Ctrl+X).
-4.  Restart Ollama:
+2.  **Run the Fix Script**:
     ```bash
-    systemctl daemon-reload
-    systemctl restart ollama
+    # Download the script (if you haven't cloned the repo)
+    curl -O https://raw.githubusercontent.com/YOUR_USERNAME/IrisChat/main/fix_ollama_linux.sh
+    
+    # Run it
+    chmod +x fix_ollama_linux.sh
+    ./fix_ollama_linux.sh
     ```
+    *   This script will open Port 11434 to the internet so Coolify can reach it.
 
-Without this step, the bot (running in Docker) cannot talk to Ollama (running on the host).
-
-> **Note on Ollama Connection:**
-> - The bot is smart! If `host.docker.internal` fails (common on Linux), it automatically tries `172.17.0.1`.
-> - Just ensure Ollama is actually listening! Check with: `netstat -tulpn | grep ollama`.
+---
 
 ### 💾 Persistent Storage (Volumes)
 To keep your **Economy Data** (User Balances) safe when you redeploy:
