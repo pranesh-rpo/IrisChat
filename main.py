@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 from telegram import Update, constants
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from telegram.request import HTTPXRequest
+import re # Regex for stripping prefixes
+
+# ... existing imports ...
 import google.generativeai as genai
 from groq import Groq
 import qrcode
@@ -216,8 +219,13 @@ def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYS
         )
         reply = completion.choices[0].message.content
         
-        # Clean up any potential self-prefixing
+        # Clean up any potential self-prefixing (e.g., "[Iris]:", "Iris:", "[Character]:")
         if reply:
+            # Regex to remove anything looking like "[Name]: " or "Name: " at the start
+            reply = re.sub(r'^\[.*?\]:\s*', '', reply) # Remove [Name]:
+            reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
+            
+            # Specific Iris cleanup just in case
             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
             
         return reply
@@ -255,6 +263,9 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
         reply = response.text
         # Clean up any potential self-prefixing
         if reply:
+            # Regex to remove anything looking like "[Name]: " or "Name: " at the start
+            reply = re.sub(r'^\[.*?\]:\s*', '', reply) # Remove [Name]:
+            reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
             
         return reply
@@ -274,7 +285,15 @@ async def get_ai_response(chat_id, user_text, user_name=None, chat_type="group")
     # Determine prompt based on mode
     system_prompt = ""
     if mode == "roleplay" and persona_prompt:
-        system_prompt = f"SYSTEM INSTRUCTION: You are currently roleplaying. \nSCENARIO: {persona_prompt}\n\nStay in character at all times."
+        system_prompt = f"""SYSTEM INSTRUCTION: 
+You are currently roleplaying. 
+SCENARIO: {persona_prompt}
+
+CRITICAL RULES:
+1. Stay in character at all times.
+2. Forget you are an AI or Iris. You are ONLY the character described above.
+3. Do NOT start your message with your name or any prefix (e.g., '[Name]:', 'Name:'). Just speak directly.
+"""
     elif mode == "game":
         # In game mode, we might just use the persona prompt as instructions
         system_prompt = f"SYSTEM INSTRUCTION: You are running a game. \nGAME: {persona_prompt}\n\nBe fun, fair, and engaging."
