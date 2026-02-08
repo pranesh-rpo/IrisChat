@@ -24,14 +24,36 @@ You MUST set these variables in the **Environment Variables** tab:
 | Key | Value | Description |
 |-----|-------|-------------|
 | `TELEGRAM_BOT_TOKEN` | `123456:ABC-DEF...` | Your Telegram Bot Token. |
-| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | **CRITICAL**: Connects to host's Ollama. |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | The bot will auto-try `172.17.0.1` if this fails. |
 | `OLLAMA_MODEL` | `gemma2:2b` | The model you pulled on the host. |
 | `PYTHONUNBUFFERED` | `1` | Ensures logs show up in Coolify. |
 
+### ⚠️ Critical for Linux VPS: Bind Ollama to 0.0.0.0
+By default, Ollama only listens on `127.0.0.1` (localhost). This means it **ignores** requests from Docker containers.
+You **MUST** configure Ollama to listen on all interfaces.
+
+**Run this on your VPS terminal:**
+1.  Edit the service:
+    ```bash
+    systemctl edit ollama.service
+    ```
+2.  Add these lines in the editor that opens:
+    ```ini
+    [Service]
+    Environment="OLLAMA_HOST=0.0.0.0"
+    ```
+3.  Save (Ctrl+O) and Exit (Ctrl+X).
+4.  Restart Ollama:
+    ```bash
+    systemctl daemon-reload
+    systemctl restart ollama
+    ```
+
+Without this step, the bot (running in Docker) cannot talk to Ollama (running on the host).
+
 > **Note on Ollama Connection:**
-> - If `http://host.docker.internal:11434` fails, try `http://172.17.0.1:11434`.
-> - Ensure Ollama is running on the host: `ollama serve`.
-> - Ensure Ollama listens on all interfaces (optional but helpful): `OLLAMA_HOST=0.0.0.0 ollama serve`.
+> - The bot is smart! If `host.docker.internal` fails (common on Linux), it automatically tries `172.17.0.1`.
+> - Just ensure Ollama is actually listening! Check with: `netstat -tulpn | grep ollama`.
 
 ### 💾 Persistent Storage (Volumes)
 To keep your **Economy Data** (User Balances) safe when you redeploy:

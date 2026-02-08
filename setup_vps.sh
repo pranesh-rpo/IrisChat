@@ -34,13 +34,36 @@ fi
 
 # 4. Pull AI Model
 echo "🧠 Pulling Gemma 2:2b Model (this might take a minute)..."
-# Start ollama in background if not running
-if ! pgrep -x "ollama" > /dev/null; then
-    ollama serve &
-    OLLAMA_PID=$!
-    sleep 5 # Wait for it to start
+
+# Ensure Ollama Service is running correctly on 0.0.0.0
+if ! systemctl is-active --quiet ollama; then
+    echo "⚙️  Configuring Ollama Service..."
+    # Run the fix script logic inline
+    OLLAMA_BIN=$(which ollama)
+    sudo pkill ollama || true
+    sudo bash -c "cat <<EOF > /etc/systemd/system/ollama.service
+[Unit]
+Description=Ollama Service
+After=network-online.target
+
+[Service]
+ExecStart=$OLLAMA_BIN serve
+User=root
+Group=root
+Restart=always
+RestartSec=3
+Environment=\"OLLAMA_HOST=0.0.0.0\"
+
+[Install]
+WantedBy=default.target
+EOF"
+    sudo systemctl daemon-reload
+    sudo systemctl enable ollama
+    sudo systemctl start ollama
 fi
 
+# Wait for it to start
+sleep 5
 ollama pull gemma2:2b
 
 # 5. Setup Configuration

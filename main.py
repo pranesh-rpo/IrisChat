@@ -48,17 +48,31 @@ AI_PROVIDER = None
 
 # Prioritize Ollama if configured (assumed if env vars are present or user requested)
 # Check if we can reach Ollama
-try:
-    logging.info(f"Checking Ollama connection at {OLLAMA_BASE_URL}...")
-    # Simple check to see if Ollama is running
-    _resp = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=2)
-    if _resp.status_code == 200:
+def check_ollama(url):
+    try:
+        logging.info(f"Checking Ollama connection at {url}...")
+        resp = requests.get(f"{url}/api/tags", timeout=2)
+        return resp.status_code == 200
+    except Exception as e:
+        logging.warning(f"Ollama connection failed for {url}: {e}")
+        return False
+
+if OLLAMA_BASE_URL:
+    if check_ollama(OLLAMA_BASE_URL):
         AI_PROVIDER = "ollama"
         logging.info(f"Using Ollama ({OLLAMA_MODEL}) as AI provider.")
+    # Auto-fallback for Linux Docker (host.docker.internal isn't native there)
+    elif "host.docker.internal" in OLLAMA_BASE_URL:
+        logging.info("Attempting fallback to Linux Docker Gateway (172.17.0.1)...")
+        fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", "172.17.0.1")
+        if check_ollama(fallback_url):
+            AI_PROVIDER = "ollama"
+            OLLAMA_BASE_URL = fallback_url # Update to the working one
+            logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Fallback URL: {OLLAMA_BASE_URL}")
+        else:
+            logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
     else:
         logging.warning("Ollama is not responding. Falling back to Cloud APIs.")
-except Exception as e:
-    logging.warning(f"Ollama connection failed ({e}). Falling back to Cloud APIs.")
 
 if not AI_PROVIDER:
     if GROQ_API_KEY:
