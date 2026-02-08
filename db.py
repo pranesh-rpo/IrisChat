@@ -46,6 +46,7 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS economy (
                 user_id INTEGER PRIMARY KEY,
+                user_name TEXT,
                 balance INTEGER DEFAULT 0,
                 last_daily TIMESTAMP,
                 last_beg TIMESTAMP,
@@ -54,6 +55,12 @@ def init_db():
                 inventory TEXT
             )
         ''')
+        
+        # Migration: Add user_name if it doesn't exist
+        try:
+            cursor.execute('ALTER TABLE economy ADD COLUMN user_name TEXT')
+        except sqlite3.OperationalError:
+            pass
 
         conn.commit()
         conn.close()
@@ -76,7 +83,19 @@ def get_balance(user_id):
         logging.error(f"Error getting balance: {e}")
         return 0
 
-def update_balance(user_id, amount):
+def update_user_name(user_id, user_name):
+    """Update the user's name in the economy table."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO economy (user_id) VALUES (?)', (user_id,))
+        cursor.execute('UPDATE economy SET user_name = ? WHERE user_id = ?', (user_name, user_id))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error updating user name: {e}")
+
+def update_balance(user_id, amount, user_name=None):
     """Add (or subtract) coins from a user's balance."""
     try:
         conn = sqlite3.connect(DB_FILE)
@@ -85,6 +104,10 @@ def update_balance(user_id, amount):
         cursor.execute('INSERT OR IGNORE INTO economy (user_id) VALUES (?)', (user_id,))
         # Update balance
         cursor.execute('UPDATE economy SET balance = balance + ? WHERE user_id = ?', (amount, user_id))
+        # Update name if provided
+        if user_name:
+            cursor.execute('UPDATE economy SET user_name = ? WHERE user_id = ?', (user_name, user_id))
+        
         conn.commit()
         conn.close()
         return get_balance(user_id)
@@ -123,7 +146,7 @@ def get_leaderboard(limit=10):
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute('SELECT user_id, balance FROM economy ORDER BY balance DESC LIMIT ?', (limit,))
+        cursor.execute('SELECT user_id, balance, user_name FROM economy ORDER BY balance DESC LIMIT ?', (limit,))
         rows = cursor.fetchall()
         conn.close()
         return rows

@@ -4,5 +4,5 @@ qrcode
 Pillow
 requests
 # Optional cloud providers (keep if user switches back)
-google-generativeai
+google-genai
 groq

@@ -7,8 +7,8 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 from telegram.request import HTTPXRequest
 import re # Regex for stripping prefixes
 
-# ... existing imports ...
-import google.generativeai as genai
+# AI Libraries
+from google import genai
 from groq import Groq
 import qrcode
 import io
@@ -81,8 +81,7 @@ if not AI_PROVIDER:
         logging.info("Using Groq API as AI provider.")
     elif GEMINI_API_KEY:
         AI_PROVIDER = "gemini"
-        genai.configure(api_key=GEMINI_API_KEY)
-        ai_client = genai.GenerativeModel('gemini-pro')
+        ai_client = genai.Client(api_key=GEMINI_API_KEY)
         logging.info("Using Gemini API as AI provider.")
     else:
         logging.warning("No AI API key found (OLLAMA, GEMINI, or GROQ). AI features will not work.")
@@ -273,40 +272,30 @@ def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYS
 
 async def get_gemini_response(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
     try:
-        # Convert unified history to Gemini format
-        gemini_history = []
+        # Gemini 2.0 / New SDK Format
+        # Convert history to Gemini format if needed, but the new SDK is flexible.
+        # Simple content generation:
         
-        # Add system prompt as user/model exchange for Gemini Pro compatibility
-        gemini_history.append({"role": "user", "parts": ["SYSTEM INSTRUCTION: " + system_prompt]})
-        gemini_history.append({"role": "model", "parts": ["Oki doki! I'm ready! ✨"]})
-        
+        full_prompt = f"{system_prompt}\n\n"
         for msg in history:
-            role = "user" if msg["role"] == "user" else "model"
+            role = msg["role"]
             content = msg["content"]
             name = msg.get("sender_name")
-            
             if role == "user" and name:
-                content = f"[{name}]: {content}"
-                
-            gemini_history.append({"role": role, "parts": [content]})
-            
-        chat = ai_client.start_chat(history=gemini_history)
+                full_prompt += f"[{name}]: {content}\n"
+            else:
+                full_prompt += f"{content}\n"
         
-        current_content = user_text
         if user_name:
-            current_content = f"[{user_name}]: {user_text}"
-            
-        response = await chat.send_message_async(current_content)
-        
-        reply = response.text
-        # Clean up any potential self-prefixing
-        if reply:
-            # Regex to remove anything looking like "[Name]: " or "Name: " at the start
-            reply = re.sub(r'^\[.*?\]:\s*', '', reply) # Remove [Name]:
-            reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
-            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-            
-        return reply
+            full_prompt += f"[{user_name}]: {user_text}\n"
+        else:
+            full_prompt += f"{user_text}\n"
+
+        response = ai_client.models.generate_content(
+            model='gemini-2.0-flash', 
+            contents=full_prompt
+        )
+        return response.text
     except Exception as e:
         logging.error(f"Gemini API Error: {e}")
         return None
@@ -420,7 +409,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     chat_type = update.effective_chat.type
     bot_username = context.bot.username
-    user_name = update.message.from_user.first_name if update.message.from_user else None
+    user_name = update.effective_user.first_name if update.effective_user else "Unknown"
+    chat_id = update.effective_chat.id
+
+    # Update user name in economy DB (keeps leaderboard fresh)
+    if update.effective_user:
+        db.update_user_name(update.effective_user.id, user_name)
+
+    # Logging
+    logging.info(f"Received message from {user_name} in {chat_id}: {user_text}")
     
     # Normalize triggers
     mentioned = False

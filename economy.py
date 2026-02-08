@@ -8,6 +8,10 @@ CURRENCY_SYMBOL = "🌸"
 async def balance(update, context):
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name
+    
+    # Update name in DB
+    db.update_user_name(user_id, user_name)
+    
     bal = db.get_balance(user_id)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -116,13 +120,16 @@ async def leaderboard(update, context):
         return
 
     msg = "🏆 **Richest Users** 🏆\n\n"
-    for i, (uid, bal) in enumerate(top_users, 1):
-        # Try to get user info if possible (might not work for users bot hasn't seen recently, but acceptable)
-        try:
-            member = await context.bot.get_chat_member(update.effective_chat.id, uid)
-            name = member.user.first_name
-        except:
-            name = f"User {uid}"
+    for i, (uid, bal, db_name) in enumerate(top_users, 1):
+        # Use name from DB if available, otherwise try to fetch (fallback)
+        if db_name:
+             name = db_name
+        else:
+            try:
+                member = await context.bot.get_chat_member(update.effective_chat.id, uid)
+                name = member.user.first_name
+            except:
+                name = f"User {uid}"
             
         msg += f"{i}. **{name}**: {bal} {CURRENCY_SYMBOL}\n"
     
