@@ -35,6 +35,11 @@ IrisChat is a charming, AI-driven Telegram chatbot designed for group chats. She
         - `GEMINI_API_KEY`: Get this from [Google AI Studio](https://makersuite.google.com/app/apikey).
     - *Note: If both keys are present, Iris will prefer Groq.*
 
+## ☁️ Deployment (Coolify)
+
+Using Coolify? We have a dedicated guide for you!
+👉 **[Read the Coolify Deployment Guide](COOLIFY.md)**
+
 ## 🚀 Deployment (VPS / Linux)
 
 The easiest way to run Iris on a VPS (like DigitalOcean, AWS, Linode) with local Ollama support.

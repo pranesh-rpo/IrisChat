@@ -36,6 +36,13 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+# Startup Logging for Debugging (Coolify/Docker)
+logging.info(f"🚀 Iris is starting...")
+logging.info(f"📂 CWD: {os.getcwd()}")
+logging.info(f"🌍 OLLAMA_BASE_URL: {OLLAMA_BASE_URL}")
+logging.info(f"🧠 OLLAMA_MODEL: {OLLAMA_MODEL}")
+logging.info(f"🤖 AI_PROVIDER Check: {AI_PROVIDER}")
+
 # AI Client Setup
 ai_client = None
 AI_PROVIDER = None

@@ -2,7 +2,7 @@ python-telegram-bot==20.8
 python-dotenv
 qrcode
 Pillow
-ollama
+requests
 # Optional cloud providers (keep if user switches back)
 google-generativeai
 groq
