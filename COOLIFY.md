@@ -26,14 +26,13 @@ Add these environment variables in Coolify:
 | `TELEGRAM_BOT_TOKEN` | `your_bot_token` | From BotFather |
 | `GEMINI_API_KEY` | `your_gemini_key` | Optional (Backup AI) |
 | `GROQ_API_KEY` | `your_groq_key` | Optional (Backup AI) |
-| `OLLAMA_BASE_URL` | `http://172.17.0.1:11434` | **Docker bridge gateway (Recommended for Coolify).** The bot auto-detects fallbacks if this doesn't work. |
+| `OLLAMA_BASE_URL` | `http://YOUR_VPS_PUBLIC_IP:11434` | **Use your VPS Public IP.** (e.g., `http://24.11.22.33:11434`) |
 | `OLLAMA_MODEL` | `gemma3:1b` | The model you want to use. |
 | `UPI_ID` | `your_upi` | For !pay command. |
 
 **Important Note on `OLLAMA_BASE_URL`:**
-- **Recommended**: Use `http://172.17.0.1:11434` (Docker bridge gateway). This is the most reliable way for a Coolify container to reach Ollama on the host.
-- **Alternative**: Use `http://YOUR_VPS_PUBLIC_IP:11434` (requires port 11434 open in firewall).
-- **Auto-Fallback**: The bot automatically tries multiple addresses (Docker gateway, `172.17.0.1`, `host.docker.internal`, `localhost`) if the configured URL fails.
+- **Recommended**: Use `http://YOUR_VPS_PUBLIC_IP:11434`. This bypasses Docker network issues by routing traffic via the internet interface.
+- **Alternative (Internal)**: `http://172.17.0.1:11434` (requires Docker host networking to work perfectly).
 
 ---
 

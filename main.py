@@ -82,40 +82,33 @@ if OLLAMA_BASE_URL:
     if check_ollama(OLLAMA_BASE_URL):
         AI_PROVIDER = "ollama"
         logging.info(f"Using Ollama ({OLLAMA_MODEL}) as AI provider.")
-    else:
-        # Auto-fallback: try common Docker-to-host addresses
-        logging.warning(f"Ollama connection failed at {OLLAMA_BASE_URL}. Trying fallback addresses...")
-
-        # Build list of fallback URLs to try
-        fallback_hosts = []
-
-        # 1. Try detected Docker gateway
+    # Auto-fallback for Linux Docker
+    elif "host.docker.internal" in OLLAMA_BASE_URL:
+        logging.info("Ollama connection failed. Attempting to detect Docker Gateway...")
+        
+        # 1. Try detected gateway
         gateway_ip = get_docker_gateway()
-        fallback_hosts.append(gateway_ip)
-
-        # 2. Standard Docker bridge gateway
-        if gateway_ip != "172.17.0.1":
-            fallback_hosts.append("172.17.0.1")
-
-        # 3. host.docker.internal (works on Docker Desktop & newer Linux Docker with --add-host)
-        fallback_hosts.append("host.docker.internal")
-
-        # 4. localhost (in case of host network mode)
-        fallback_hosts.append("127.0.0.1")
-
-        for host in fallback_hosts:
-            fallback_url = f"http://{host}:11434"
-            if fallback_url == OLLAMA_BASE_URL:
-                continue  # Already tried this one
-            logging.info(f"Trying Ollama at {fallback_url}...")
-            if check_ollama(fallback_url):
+        fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", gateway_ip)
+        
+        if check_ollama(fallback_url):
+            AI_PROVIDER = "ollama"
+            OLLAMA_BASE_URL = fallback_url
+            logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Gateway URL: {OLLAMA_BASE_URL}")
+        
+        # 2. If detected failed and it wasn't 172.17.0.1, try standard 172.17.0.1
+        elif gateway_ip != "172.17.0.1":
+             logging.info("Detected gateway failed. Trying standard 172.17.0.1...")
+             fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", "172.17.0.1")
+             if check_ollama(fallback_url):
                 AI_PROVIDER = "ollama"
                 OLLAMA_BASE_URL = fallback_url
-                logging.info(f"Using Ollama ({OLLAMA_MODEL}) via fallback: {OLLAMA_BASE_URL}")
-                break
-
-        if not AI_PROVIDER:
-            logging.warning("All Ollama fallback addresses failed. Falling back to Cloud APIs.")
+                logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Standard URL: {OLLAMA_BASE_URL}")
+             else:
+                logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
+        else:
+             logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
+    else:
+        logging.warning("Ollama is not responding. Falling back to Cloud APIs.")
 
 if not AI_PROVIDER:
     if GROQ_API_KEY:
@@ -162,6 +155,17 @@ CORE RULES:
 5.  **Prefix**: NEVER start your message with "Iris:" or "[Iris]:".
 6.  **Brevity**: Group chats move fast. Keep your answers short and punchy unless asked for a long explanation.
 """
+
+# Simplified Prompt for Small Local Models (Ollama)
+SYSTEM_PROMPT_OLLAMA = """
+You are Iris, a cute and friendly 21-year-old girl.
+- Be warm, playful, and sweet.
+- Use 1-2 emojis per message.
+- Keep answers short and chatty.
+- NEVER say "Iris:".
+- You are NOT an AI. You are a real girl.
+"""
+
 
 # History management
 # We now use db.py for persistent storage
@@ -420,7 +424,11 @@ CRITICAL RULES:
         system_prompt = f"SYSTEM INSTRUCTION: You are running a game. \nGAME: {persona_prompt}\n\nBe fun, fair, and engaging."
     else:
         # Normal mode
-        system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
+        if AI_PROVIDER == "ollama":
+            # Use simplified prompt for local models to prevent confusion
+            system_prompt = SYSTEM_PROMPT_OLLAMA
+        else:
+            system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
 
     # Get history from DB
     history = db.get_history(chat_id, limit=MAX_HISTORY)
