@@ -31,6 +31,17 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_chat_id ON messages(chat_id)
         ''')
+        
+        # Create chat_settings table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS chat_settings (
+                chat_id INTEGER PRIMARY KEY,
+                mode TEXT DEFAULT 'normal',
+                persona_prompt TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         conn.commit()
         conn.close()
         logging.info("Database initialized successfully.")
@@ -89,3 +100,39 @@ def clear_history(chat_id):
         conn.close()
     except Exception as e:
         logging.error(f"Error clearing history from DB: {e}")
+
+def update_chat_mode(chat_id, mode, persona_prompt=None):
+    """Update the chat mode and persona prompt."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO chat_settings (chat_id, mode, persona_prompt, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                mode=excluded.mode,
+                persona_prompt=excluded.persona_prompt,
+                updated_at=CURRENT_TIMESTAMP
+        ''', (chat_id, mode, persona_prompt))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error updating chat mode: {e}")
+
+def get_chat_settings(chat_id):
+    """Get the current settings for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT mode, persona_prompt FROM chat_settings WHERE chat_id = ?', (chat_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {"mode": row["mode"], "persona_prompt": row["persona_prompt"]}
+        else:
+            return {"mode": "normal", "persona_prompt": None}
+    except Exception as e:
+        logging.error(f"Error retrieving chat settings: {e}")
+        return {"mode": "normal", "persona_prompt": None}

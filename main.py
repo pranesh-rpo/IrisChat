@@ -119,6 +119,62 @@ async def donate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+async def roleplay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    # Check if a scenario is provided
+    if not context.args:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Usage: `!roleplay <scenario>`\nExample: `!roleplay You are a strict math teacher.`",
+            parse_mode='Markdown'
+        )
+        return
+
+    scenario = " ".join(context.args)
+    db.update_chat_mode(chat_id, "roleplay", scenario)
+    
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"Roleplay mode ON! 🎭\nScenario: {scenario}\n(Type `!normal` to stop)"
+    )
+
+async def normal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    db.update_chat_mode(chat_id, "normal", None)
+    
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Back to being just Iris! ✨ Hihi! 💖"
+    )
+
+async def game_truth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    # We set mode to 'game' but for truth/dare we might just ask the AI immediately
+    # Let's just trigger a one-off AI response with a specific prompt, without changing permanent mode
+    
+    prompt = "Generate a fun, clean, but interesting Truth question for a game of Truth or Dare. Just the question."
+    # We can reuse get_ai_response but we need to bypass the history/mode logic or just call the provider directly.
+    # To keep it simple, let's just ask the AI as a user message, but hidden? 
+    # Better: Call the provider function directly with a specific system prompt.
+    
+    ai_prompt = "You are a game master. Ask a fun Truth question."
+    
+    # Use existing helper (hacky but works)
+    response = await get_ai_response(chat_id, "Give me a Truth question!", user_name="GameMaster", chat_type="game")
+    
+    await context.bot.send_message(chat_id=chat_id, text=f"🎲 **TRUTH**: {response}", parse_mode='Markdown')
+
+async def game_dare(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    response = await get_ai_response(chat_id, "Give me a fun Dare!", user_name="GameMaster", chat_type="game")
+    await context.bot.send_message(chat_id=chat_id, text=f"🔥 **DARE**: {response}", parse_mode='Markdown')
+
+async def game_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    response = await get_ai_response(chat_id, "Ask me a random trivia question with 4 options (A, B, C, D). Do NOT give the answer yet.", user_name="GameMaster", chat_type="game")
+    await context.bot.send_message(chat_id=chat_id, text=f"🧩 **TRIVIA**: {response}", parse_mode='Markdown')
+
 def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
     try:
         # Format history to include names
@@ -203,8 +259,21 @@ async def get_ai_response(chat_id, user_text, user_name=None, chat_type="group")
     if not ai_client:
         return "I need my API key to think! 😵‍💫 (Check .env)"
 
-    # Determine prompt
-    system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
+    # Get chat settings
+    settings = db.get_chat_settings(chat_id)
+    mode = settings["mode"]
+    persona_prompt = settings["persona_prompt"]
+
+    # Determine prompt based on mode
+    system_prompt = ""
+    if mode == "roleplay" and persona_prompt:
+        system_prompt = f"SYSTEM INSTRUCTION: You are currently roleplaying. \nSCENARIO: {persona_prompt}\n\nStay in character at all times."
+    elif mode == "game":
+        # In game mode, we might just use the persona prompt as instructions
+        system_prompt = f"SYSTEM INSTRUCTION: You are running a game. \nGAME: {persona_prompt}\n\nBe fun, fair, and engaging."
+    else:
+        # Normal mode
+        system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
 
     # Get history from DB
     history = db.get_history(chat_id, limit=MAX_HISTORY)
@@ -283,6 +352,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message_id=update.message.message_id
         )
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+✨ **Iris - Your Cute AI Bestie!** ✨
+
+Here are the things I can do:
+
+🤖 **Chatting**
+- Just mention `Iris` or reply to me to chat!
+- In DMs, I'm always listening! 💖
+
+🎭 **Roleplay & Fun**
+- `!roleplay <scenario>`: I'll act out any character/scenario you want!
+- `!normal`: Switch me back to normal Iris mode.
+
+🎲 **Games**
+- `!truth`: I'll ask you a spicy Truth question!
+- `!dare`: I'll give you a crazy Dare!
+- `!trivia`: I'll test your knowledge with a random question!
+
+⚙️ **Utilities**
+- `!reset`: Wipes my memory of our chat.
+- `!donate`: Support my server costs! 🥺
+- `!help`: Shows this message.
+
+Let's have fun! 🌸
+"""
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
+
 if __name__ == '__main__':
     # Initialize Database
     db.init_db()
@@ -296,6 +393,14 @@ if __name__ == '__main__':
         start_handler = CommandHandler('start', start)
         msg_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
         
+        # New Command Handlers
+        application.add_handler(CommandHandler('roleplay', roleplay))
+        application.add_handler(CommandHandler('normal', normal))
+        application.add_handler(CommandHandler('truth', game_truth))
+        application.add_handler(CommandHandler('dare', game_dare))
+        application.add_handler(CommandHandler('trivia', game_trivia))
+        application.add_handler(CommandHandler('help', help_command))
+
         application.add_handler(start_handler)
         application.add_handler(msg_handler)
         
