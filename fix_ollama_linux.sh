@@ -48,12 +48,24 @@ sudo systemctl daemon-reload
 sudo systemctl enable ollama
 sudo systemctl start ollama
 
-# 5. Configure Firewall (UFW) if active
-if command -v ufw > /dev/null; then
-    echo "🛡️ Configuring Firewall (UFW)..."
-    # Allow Docker subnet (172.17.0.0/16) to access Ollama
+# 5. Configure Firewall (UFW or Iptables)
+echo "🛡️ Configuring Firewall..."
+
+if command -v ufw > /dev/null && sudo ufw status | grep -q "Status: active"; then
+    echo "   - Detected UFW. Adding rule..."
     sudo ufw allow from 172.17.0.0/16 to any port 11434 proto tcp
-    echo "✅ Allowed Docker subnet (172.17.x.x) to access Ollama"
+    sudo ufw reload
+    echo "   ✅ UFW configured."
+else
+    echo "   - UFW not active. Checking iptables..."
+    # Check if rule exists to avoid duplicates
+    if ! sudo iptables -C INPUT -s 172.17.0.0/16 -p tcp --dport 11434 -j ACCEPT 2>/dev/null; then
+        echo "   - Adding iptables rule..."
+        sudo iptables -A INPUT -s 172.17.0.0/16 -p tcp --dport 11434 -j ACCEPT
+        echo "   ✅ Iptables rule added."
+    else
+        echo "   - Iptables rule already exists."
+    fi
 fi
 
 echo "✅ Success! Ollama is now running on 0.0.0.0:11434"

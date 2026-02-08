@@ -6,6 +6,8 @@ from telegram import Update, constants
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from telegram.request import HTTPXRequest
 import re # Regex for stripping prefixes
+import socket
+import struct
 
 # AI Libraries
 from google import genai
@@ -57,20 +59,54 @@ def check_ollama(url):
         logging.warning(f"Ollama connection failed for {url}: {e}")
         return False
 
+def get_docker_gateway():
+    """Try to find the default gateway IP (Docker Host) from /proc/net/route."""
+    try:
+        with open("/proc/net/route") as fh:
+            for line in fh:
+                fields = line.strip().split()
+                # Destination 00000000 means default gateway
+                if fields[1] != '00000000' or not int(fields[3], 16) & 2:
+                    continue
+                
+                # Convert hex to IP
+                gw_ip = socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+                logging.info(f"Detected Docker Gateway IP: {gw_ip}")
+                return gw_ip
+    except Exception as e:
+        logging.warning(f"Could not detect Docker Gateway: {e}")
+    
+    return "172.17.0.1" # Fallback
+
 if OLLAMA_BASE_URL:
     if check_ollama(OLLAMA_BASE_URL):
         AI_PROVIDER = "ollama"
         logging.info(f"Using Ollama ({OLLAMA_MODEL}) as AI provider.")
-    # Auto-fallback for Linux Docker (host.docker.internal isn't native there)
+    # Auto-fallback for Linux Docker
     elif "host.docker.internal" in OLLAMA_BASE_URL:
-        logging.info("Attempting fallback to Linux Docker Gateway (172.17.0.1)...")
-        fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", "172.17.0.1")
+        logging.info("Ollama connection failed. Attempting to detect Docker Gateway...")
+        
+        # 1. Try detected gateway
+        gateway_ip = get_docker_gateway()
+        fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", gateway_ip)
+        
         if check_ollama(fallback_url):
             AI_PROVIDER = "ollama"
-            OLLAMA_BASE_URL = fallback_url # Update to the working one
-            logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Fallback URL: {OLLAMA_BASE_URL}")
+            OLLAMA_BASE_URL = fallback_url
+            logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Gateway URL: {OLLAMA_BASE_URL}")
+        
+        # 2. If detected failed and it wasn't 172.17.0.1, try standard 172.17.0.1
+        elif gateway_ip != "172.17.0.1":
+             logging.info("Detected gateway failed. Trying standard 172.17.0.1...")
+             fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", "172.17.0.1")
+             if check_ollama(fallback_url):
+                AI_PROVIDER = "ollama"
+                OLLAMA_BASE_URL = fallback_url
+                logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Standard URL: {OLLAMA_BASE_URL}")
+             else:
+                logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
         else:
-            logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
+             logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
     else:
         logging.warning("Ollama is not responding. Falling back to Cloud APIs.")
 
