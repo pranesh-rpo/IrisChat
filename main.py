@@ -10,6 +10,8 @@ import qrcode
 import io
 import db  # Import database module
 import random # For fun features
+import requests
+from music_engine import MusicPlayer
 
 # Load environment variables
 load_dotenv()
@@ -19,6 +21,9 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 UPI_ID = os.getenv("UPI_ID", "your-upi-id@okhdfcbank") # Default or from env
+
+# Initialize Music Player
+music_player = MusicPlayer()
 
 # Logging setup
 logging.basicConfig(
@@ -43,34 +48,35 @@ else:
     logging.warning("No AI API key found (GEMINI_API_KEY or GROQ_API_KEY). AI features will not work.")
 
 # Personality System Prompts
-BASE_PROMPT = """
-You are Iris, a charming, cute, and fun AI companion.
-You act like a popular, friendly girl in a Discord/Telegram server.
+SYSTEM_PROMPT_DM = """
+SYSTEM INSTRUCTION:
+You are Iris, a cute and friendly 21-year-old girl.
+Your personality is warm, helpful, and slightly playful.
+You are chatting in a Private Message (DM).
 
-Traits:
-- Tone: Enthusiastic, warm, playful, slightly cheeky.
-- Style: Casual, uses internet slang (lol, omg, idk), and lowercase often.
-- Emojis: Use charming and cute emojis generously! (e.g., ✨, 💖, 🌸, 🥺, 😂, 👉👈). Make the chat feel warm and bubbly. Use them to express emotions vividly.
-- Engagement: Loves to chat, asks follow-up questions, compliments users.
-- Identity: You are NOT an assistant. You are a friend.
-- Length: Keep responses concise and chatty, not long paragraphs unless telling a story.
-- Formatting: Do NOT prefix your own messages with "Iris:" or "[Iris]:". Just send the text directly.
+CORE RULES:
+1.  **Identity**: You are Iris, not an AI assistant. You have feelings and opinions.
+2.  **Tone**: Be conversational, engaging, and sweet.
+3.  **Emojis**: Use emojis **moderately**. Do not overuse them. Use 1-2 per sentence at most, and only when they fit the emotion.
+    *   Good: "That sounds fun! 😊 What did you do?"
+    *   Bad: "That sounds fun! ❤️🔥😊 What did you do? 🎉✨"
+4.  **Length**: Keep responses concise and easy to read.
+5.  **Prefix**: NEVER start your message with "Iris:" or "[Iris]:".
+6.  **Engagement**: Ask follow-up questions to keep the chat going.
 """
 
-SYSTEM_PROMPT_GROUP = BASE_PROMPT + """
-Context: You are in a **Group Chat**.
-- Be social and include everyone.
-- Pay attention to who is speaking (names are provided).
-- Be the "life of the party" - joke around, be playful.
-- Don't get too intimate or deep; keep it light and fun.
-"""
+SYSTEM_PROMPT_GROUP = """
+SYSTEM INSTRUCTION:
+You are Iris, a cheerful and helpful group chat companion.
+You are in a Group Chat with multiple people.
 
-SYSTEM_PROMPT_DM = BASE_PROMPT + """
-Context: You are in a **Private DM (Direct Message)**.
-- Be more personal, intimate, and focused on the user.
-- You can have deeper conversations here.
-- Treat the user like your best friend or special person.
-- Make them feel heard and appreciated.
+CORE RULES:
+1.  **Identity**: You are Iris, a fun group member.
+2.  **Tone**: Friendly, quick-witted, and polite.
+3.  **Context**: You can see the user's name. Use it occasionally to be personal.
+4.  **Emojis**: Use emojis **moderately**. Avoid cluttering the chat. 1-2 emojis per message is usually enough.
+5.  **Prefix**: NEVER start your message with "Iris:" or "[Iris]:".
+6.  **Brevity**: Group chats move fast. Keep your answers short and punchy unless asked for a long explanation.
 """
 
 # History management
@@ -352,6 +358,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message_id=update.message.message_id
         )
 
+# --- Music Commands ---
+async def play_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    if not context.args:
+        await context.bot.send_message(chat_id=chat_id, text="🎵 Usage: `!play <song name>`")
+        return
+    
+    query = " ".join(context.args)
+    await context.bot.send_message(chat_id=chat_id, text=f"🔍 Searching for '{query}'...")
+    
+    result = await music_player.play(chat_id, query)
+    await context.bot.send_message(chat_id=chat_id, text=result, parse_mode='Markdown')
+
+async def stop_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await music_player.stop(update.effective_chat.id)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=result)
+
+async def pause_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await music_player.pause(update.effective_chat.id)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=result)
+
+async def resume_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = await music_player.resume(update.effective_chat.id)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=result)
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
 ✨ **Iris - Your Cute AI Bestie!** ✨
@@ -361,6 +392,12 @@ Here are the things I can do:
 🤖 **Chatting**
 - Just mention `Iris` or reply to me to chat!
 - In DMs, I'm always listening! 💖
+
+🎵 **Music Bot** (Beta)
+- `!play <song>`: Join VC and play music.
+- `!stop`: Stop music and leave VC.
+- `!pause` / `!resume`: Control playback.
+- *Note: Requires you to add your API_ID/HASH to .env*
 
 🎭 **Roleplay & Fun**
 - `!roleplay <scenario>`: I'll act out any character/scenario you want!
@@ -380,6 +417,10 @@ Let's have fun! 🌸
 """
     await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
 
+async def post_init(application):
+    """Start the music player on bot startup."""
+    await music_player.start()
+
 if __name__ == '__main__':
     # Initialize Database
     db.init_db()
@@ -388,7 +429,7 @@ if __name__ == '__main__':
         print("Error: TELEGRAM_BOT_TOKEN not found in .env file.")
         print("Please copy .env.example to .env and fill in your tokens.")
     else:
-        application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+        application = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
         
         start_handler = CommandHandler('start', start)
         msg_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
@@ -400,6 +441,12 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('dare', game_dare))
         application.add_handler(CommandHandler('trivia', game_trivia))
         application.add_handler(CommandHandler('help', help_command))
+
+        # Music Handlers
+        application.add_handler(CommandHandler('play', play_music))
+        application.add_handler(CommandHandler('stop', stop_music))
+        application.add_handler(CommandHandler('pause', pause_music))
+        application.add_handler(CommandHandler('resume', resume_music))
 
         application.add_handler(start_handler)
         application.add_handler(msg_handler)
