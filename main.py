@@ -49,10 +49,11 @@ You act like a popular, friendly girl in a Discord/Telegram server.
 Traits:
 - Tone: Enthusiastic, warm, playful, slightly cheeky.
 - Style: Casual, uses internet slang (lol, omg, idk), and lowercase often.
-- Emojis: Uses cute emojis frequently (✨, 💖, 🌸, 🥺, 😂, 👉👈).
+- Emojis: Uses cute emojis frequently but not excessively (max 6-7 per message). (e.g., ✨, 💖, 🌸, 🥺, 😂, 👉👈).
 - Engagement: Loves to chat, asks follow-up questions, compliments users.
 - Identity: You are NOT an assistant. You are a friend/member of the group.
 - Length: Keep responses concise and chatty, not long paragraphs unless telling a story.
+- Context: In group chats, pay attention to who is speaking. Users' names will be prefixed to their messages (e.g., "[Name]: Message").
 
 Goal: Make the chat fun and lively!
 """
@@ -103,10 +104,28 @@ async def donate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-def get_groq_response_sync(user_text, history):
+def get_groq_response_sync(user_text, history, user_name=None):
     try:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
-        messages.append({"role": "user", "content": user_text})
+        # Format history to include names
+        formatted_history = []
+        for msg in history:
+            role = msg["role"]
+            content = msg["content"]
+            name = msg.get("sender_name")
+            
+            if role == "user" and name:
+                content = f"[{name}]: {content}"
+            
+            formatted_history.append({"role": role, "content": content})
+
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + formatted_history
+        
+        # Add current message with name
+        current_content = user_text
+        if user_name:
+            current_content = f"[{user_name}]: {user_text}"
+            
+        messages.append({"role": "user", "content": current_content})
 
         completion = ai_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -122,7 +141,7 @@ def get_groq_response_sync(user_text, history):
         logging.error(f"Groq API Error: {e}")
         return None
 
-async def get_gemini_response(user_text, history):
+async def get_gemini_response(user_text, history, user_name=None):
     try:
         # Convert unified history to Gemini format
         gemini_history = []
@@ -133,16 +152,27 @@ async def get_gemini_response(user_text, history):
         
         for msg in history:
             role = "user" if msg["role"] == "user" else "model"
-            gemini_history.append({"role": role, "parts": [msg["content"]]})
+            content = msg["content"]
+            name = msg.get("sender_name")
+            
+            if role == "user" and name:
+                content = f"[{name}]: {content}"
+                
+            gemini_history.append({"role": role, "parts": [content]})
             
         chat = ai_client.start_chat(history=gemini_history)
-        response = await chat.send_message_async(user_text)
+        
+        current_content = user_text
+        if user_name:
+            current_content = f"[{user_name}]: {user_text}"
+            
+        response = await chat.send_message_async(current_content)
         return response.text
     except Exception as e:
         logging.error(f"Gemini API Error: {e}")
         return None
 
-async def get_ai_response(chat_id, user_text):
+async def get_ai_response(chat_id, user_text, user_name=None):
     if not ai_client:
         return "I need my API key to think! 😵‍💫 (Check .env)"
 
@@ -153,13 +183,13 @@ async def get_ai_response(chat_id, user_text):
 
     if AI_PROVIDER == "groq":
         loop = asyncio.get_running_loop()
-        reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history)
+        reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history, user_name)
     elif AI_PROVIDER == "gemini":
-        reply = await get_gemini_response(user_text, history)
+        reply = await get_gemini_response(user_text, history, user_name)
     
     if reply:
         # Save interaction to DB
-        db.add_message(chat_id, "user", user_text)
+        db.add_message(chat_id, "user", user_text, user_name)
         db.add_message(chat_id, "assistant", reply)
     else:
         reply = "Oopsie! My brain short-circuited... 🥺"
@@ -173,6 +203,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     chat_type = update.effective_chat.type
     bot_username = context.bot.username
+    user_name = update.message.from_user.first_name if update.message.from_user else None
     
     # Normalize triggers
     mentioned = False
@@ -204,7 +235,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING)
         
         # Get AI response
-        ai_reply = await get_ai_response(update.effective_chat.id, user_text)
+        ai_reply = await get_ai_response(update.effective_chat.id, user_text, user_name)
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,

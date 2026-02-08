@@ -15,9 +15,18 @@ def init_db():
                 chat_id INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                sender_name TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Attempt to add sender_name column if it doesn't exist (migration for existing DBs)
+        try:
+            cursor.execute('ALTER TABLE messages ADD COLUMN sender_name TEXT')
+        except sqlite3.OperationalError:
+            # Column likely already exists
+            pass
+
         # Create index for faster retrieval by chat_id
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_chat_id ON messages(chat_id)
@@ -28,15 +37,15 @@ def init_db():
     except Exception as e:
         logging.error(f"Database initialization error: {e}")
 
-def add_message(chat_id, role, content):
+def add_message(chat_id, role, content, sender_name=None):
     """Add a message to the database."""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO messages (chat_id, role, content)
-            VALUES (?, ?, ?)
-        ''', (chat_id, role, content))
+            INSERT INTO messages (chat_id, role, content, sender_name)
+            VALUES (?, ?, ?, ?)
+        ''', (chat_id, role, content, sender_name))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -51,8 +60,8 @@ def get_history(chat_id, limit=20):
         
         # Get last N messages (we need to order by id DESC to get latest, then reverse back)
         cursor.execute('''
-            SELECT role, content FROM (
-                SELECT role, content, id 
+            SELECT role, content, sender_name FROM (
+                SELECT role, content, sender_name, id 
                 FROM messages 
                 WHERE chat_id = ? 
                 ORDER BY id DESC 
@@ -64,7 +73,7 @@ def get_history(chat_id, limit=20):
         conn.close()
         
         # Convert to list of dicts
-        history = [{"role": row["role"], "content": row["content"]} for row in rows]
+        history = [{"role": row["role"], "content": row["content"], "sender_name": row["sender_name"]} for row in rows]
         return history
     except Exception as e:
         logging.error(f"Error retrieving history from DB: {e}")
