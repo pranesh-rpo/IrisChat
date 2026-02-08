@@ -4,6 +4,7 @@ import asyncio
 from dotenv import load_dotenv
 from telegram import Update, constants
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from telegram.request import HTTPXRequest
 import google.generativeai as genai
 from groq import Groq
 import qrcode
@@ -362,14 +363,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def play_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not context.args:
-        await context.bot.send_message(chat_id=chat_id, text="🎵 Usage: `!play <song name>`")
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="🎵 Usage: `!play <song name>`")
+        except Exception as e:
+            logging.error(f"Failed to send help message: {e}")
         return
     
     query = " ".join(context.args)
-    await context.bot.send_message(chat_id=chat_id, text=f"🔍 Searching for '{query}'...")
+    
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=f"🔍 Searching for '{query}'...")
+    except Exception as e:
+        logging.error(f"Failed to send search status: {e}")
+        # Continue anyway, as the play command might still work
     
     result = await music_player.play(chat_id, query)
-    await context.bot.send_message(chat_id=chat_id, text=result, parse_mode='Markdown')
+    
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=result, parse_mode='Markdown')
+    except Exception as e:
+        logging.error(f"Failed to send play result: {e}")
 
 async def stop_music(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = await music_player.stop(update.effective_chat.id)
@@ -397,7 +410,6 @@ Here are the things I can do:
 - `!play <song>`: Join VC and play music.
 - `!stop`: Stop music and leave VC.
 - `!pause` / `!resume`: Control playback.
-- *Note: Requires you to add your API_ID/HASH to .env*
 
 🎭 **Roleplay & Fun**
 - `!roleplay <scenario>`: I'll act out any character/scenario you want!
@@ -429,7 +441,9 @@ if __name__ == '__main__':
         print("Error: TELEGRAM_BOT_TOKEN not found in .env file.")
         print("Please copy .env.example to .env and fill in your tokens.")
     else:
-        application = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+        # Increase connection timeouts to handle slow networks/server lag
+        request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+        application = ApplicationBuilder().token(TELEGRAM_TOKEN).request(request).post_init(post_init).build()
         
         start_handler = CommandHandler('start', start)
         msg_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)

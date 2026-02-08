@@ -85,7 +85,7 @@ class MusicPlayer:
     async def play(self, chat_id, query):
         """Play a song in the voice chat."""
         if not self.is_running:
-            return "❌ Music system is not active. Check server logs or config."
+            return "❌ Music mode is currently unavailable. 😔"
 
         song_info = await self.search_song(query)
         if not song_info:
@@ -106,7 +106,7 @@ class MusicPlayer:
     async def stop(self, chat_id):
         """Stop playback and leave voice chat."""
         if not self.is_running:
-            return "❌ Music system inactive."
+            return "❌ Music mode is unavailable."
         
         try:
             await self.call_client.leave_call(chat_id)
@@ -115,14 +115,14 @@ class MusicPlayer:
             return f"❌ Error stopping: {e}"
 
     async def pause(self, chat_id):
-        if not self.is_running: return "❌ Music system inactive."
+        if not self.is_running: return "❌ Music mode is unavailable."
         try:
             await self.call_client.pause_stream(chat_id)
             return "paused ⏸️"
         except: return "❌ Not playing."
 
     async def resume(self, chat_id):
-        if not self.is_running: return "❌ Music system inactive."
+        if not self.is_running: return "❌ Music mode is unavailable."
         try:
             await self.call_client.resume_stream(chat_id)
             return "resumed ▶️"
