@@ -1,9 +1,9 @@
 [phases.setup]
-nixPkgs = ["ffmpeg", "gcc", "cmake", "git", "gnumake"]
-aptPkgs = ["python3", "python3-pip", "python3-venv"]
+nixPkgs = []
+aptPkgs = ["python3-full", "python3-pip", "ffmpeg", "git", "build-essential", "cmake"]
 
 [phases.install]
-cmds = ["python3 -m pip install -r requirements.txt"]
+cmds = ["python3 -m pip install -r requirements.txt --break-system-packages"]
 
 [start]
 cmd = "python3 main.py"
