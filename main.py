@@ -9,6 +9,7 @@ from groq import Groq
 import qrcode
 import io
 import db  # Import database module
+import random # For fun features
 
 # Load environment variables
 load_dotenv()
@@ -41,9 +42,9 @@ elif GEMINI_API_KEY:
 else:
     logging.warning("No AI API key found (GEMINI_API_KEY or GROQ_API_KEY). AI features will not work.")
 
-# Personality System Prompt
-SYSTEM_PROMPT = """
-You are Iris, a charming, cute, and fun AI companion in a Telegram group chat. 
+# Personality System Prompts
+BASE_PROMPT = """
+You are Iris, a charming, cute, and fun AI companion.
 You act like a popular, friendly girl in a Discord/Telegram server.
 
 Traits:
@@ -51,12 +52,25 @@ Traits:
 - Style: Casual, uses internet slang (lol, omg, idk), and lowercase often.
 - Emojis: Use charming and cute emojis generously! (e.g., ✨, 💖, 🌸, 🥺, 😂, 👉👈). Make the chat feel warm and bubbly. Use them to express emotions vividly.
 - Engagement: Loves to chat, asks follow-up questions, compliments users.
-- Identity: You are NOT an assistant. You are a friend/member of the group.
+- Identity: You are NOT an assistant. You are a friend.
 - Length: Keep responses concise and chatty, not long paragraphs unless telling a story.
-- Context: In group chats, pay attention to who is speaking. Users' names will be prefixed to their messages (e.g., "[Name]: Message").
 - Formatting: Do NOT prefix your own messages with "Iris:" or "[Iris]:". Just send the text directly.
+"""
 
-Goal: Make the chat fun and lively!
+SYSTEM_PROMPT_GROUP = BASE_PROMPT + """
+Context: You are in a **Group Chat**.
+- Be social and include everyone.
+- Pay attention to who is speaking (names are provided).
+- Be the "life of the party" - joke around, be playful.
+- Don't get too intimate or deep; keep it light and fun.
+"""
+
+SYSTEM_PROMPT_DM = BASE_PROMPT + """
+Context: You are in a **Private DM (Direct Message)**.
+- Be more personal, intimate, and focused on the user.
+- You can have deeper conversations here.
+- Treat the user like your best friend or special person.
+- Make them feel heard and appreciated.
 """
 
 # History management
@@ -105,7 +119,7 @@ async def donate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-def get_groq_response_sync(user_text, history, user_name=None):
+def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
     try:
         # Format history to include names
         formatted_history = []
@@ -119,7 +133,7 @@ def get_groq_response_sync(user_text, history, user_name=None):
             
             formatted_history.append({"role": role, "content": content})
 
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + formatted_history
+        messages = [{"role": "system", "content": system_prompt}] + formatted_history
         
         # Add current message with name
         current_content = user_text
@@ -148,13 +162,13 @@ def get_groq_response_sync(user_text, history, user_name=None):
         logging.error(f"Groq API Error: {e}")
         return None
 
-async def get_gemini_response(user_text, history, user_name=None):
+async def get_gemini_response(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
     try:
         # Convert unified history to Gemini format
         gemini_history = []
         
         # Add system prompt as user/model exchange for Gemini Pro compatibility
-        gemini_history.append({"role": "user", "parts": ["SYSTEM INSTRUCTION: " + SYSTEM_PROMPT]})
+        gemini_history.append({"role": "user", "parts": ["SYSTEM INSTRUCTION: " + system_prompt]})
         gemini_history.append({"role": "model", "parts": ["Oki doki! I'm ready! ✨"]})
         
         for msg in history:
@@ -185,9 +199,12 @@ async def get_gemini_response(user_text, history, user_name=None):
         logging.error(f"Gemini API Error: {e}")
         return None
 
-async def get_ai_response(chat_id, user_text, user_name=None):
+async def get_ai_response(chat_id, user_text, user_name=None, chat_type="group"):
     if not ai_client:
         return "I need my API key to think! 😵‍💫 (Check .env)"
+
+    # Determine prompt
+    system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
 
     # Get history from DB
     history = db.get_history(chat_id, limit=MAX_HISTORY)
@@ -196,9 +213,9 @@ async def get_ai_response(chat_id, user_text, user_name=None):
 
     if AI_PROVIDER == "groq":
         loop = asyncio.get_running_loop()
-        reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history, user_name)
+        reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history, user_name, system_prompt)
     elif AI_PROVIDER == "gemini":
-        reply = await get_gemini_response(user_text, history, user_name)
+        reply = await get_gemini_response(user_text, history, user_name, system_prompt)
     
     if reply:
         # Save interaction to DB
@@ -244,11 +261,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     should_reply = (chat_type == 'private') or mentioned
 
+    # Fun Feature: Randomly react to messages
+    # 30% chance in DMs, 15% in groups (to not be annoying)
+    if random.random() < (0.3 if chat_type == 'private' else 0.15):
+        try:
+            reactions = ["❤️", "🔥", "😂", "🥺", "👍", "👏", "🎉", "🤩", "🤔"]
+            await update.message.set_reaction(reaction=random.choice(reactions))
+        except Exception as e:
+            # Reactions might be disabled or not supported in some contexts
+            logging.debug(f"Failed to react: {e}")
+
     if should_reply:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING)
         
         # Get AI response
-        ai_reply = await get_ai_response(update.effective_chat.id, user_text, user_name)
+        ai_reply = await get_ai_response(update.effective_chat.id, user_text, user_name, chat_type)
         
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
