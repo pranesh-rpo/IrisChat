@@ -424,11 +424,7 @@ CRITICAL RULES:
         system_prompt = f"SYSTEM INSTRUCTION: You are running a game. \nGAME: {persona_prompt}\n\nBe fun, fair, and engaging."
     else:
         # Normal mode
-        if AI_PROVIDER == "ollama":
-            # Use simplified prompt for local models to prevent confusion
-            system_prompt = SYSTEM_PROMPT_OLLAMA
-        else:
-            system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
+        system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
 
     # Get history from DB
     history = db.get_history(chat_id, limit=MAX_HISTORY)
