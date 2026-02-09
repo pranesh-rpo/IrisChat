@@ -11,9 +11,9 @@ if ! command -v ollama &> /dev/null; then
     exit 1
 fi
 
-# 2. Pull Base Model (Gemma 2 2B is efficient and smart)
-echo "📥 Pulling base model (gemma2:2b)..."
-ollama pull gemma2:2b
+# 2. Pull Base Model (Llama 3.1 8B is the new standard)
+echo "📥 Pulling base model (llama3.1:8b)..."
+ollama pull llama3.1:8b
 
 # 3. Create 'iris' model
 echo "🔨 Creating 'iris' model from Modelfile..."

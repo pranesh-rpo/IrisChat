@@ -1,4 +1,4 @@
-FROM gemma2:2b
+FROM llama3.1:8b
 
 # Iris Personality Parameter
 PARAMETER temperature 0.9
