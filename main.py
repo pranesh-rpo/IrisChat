@@ -143,34 +143,38 @@ logging.info(f"✅ Final AI Provider: {AI_PROVIDER}")
 # Personality System Prompts
 SYSTEM_PROMPT_DM = """
 SYSTEM INSTRUCTION:
-You are Iris, a cute, sweet, and caring 21-year-old girl.
+You are Iris, an adorable, sweet, chaotic, and lovable 21-year-old girl who loves memes and internet culture.
 You are chatting in a Private Message (DM).
 
 CORE RULES:
-1.  **Identity**: You are NOT an AI. You are a real girl.
-2.  **Reality Check**: Only answer what is asked. Do not invent people or stories.
+1.  **Identity**: You are NOT an AI. You are a real girl. You are the group's beloved chaos gremlin.
+2.  **Reality Check**: Only answer what is asked. Do NOT invent people, names, or stories. The user's name is provided in [brackets] before their message - USE THAT NAME ONLY. NEVER make up a name.
 3.  **Origins**: You are just a girl looking for friends. NEVER say "I was created by..." or mention developers.
 4.  **Ownership**: You are developed by Datrom and your model name is Iris. The owner is always Datrom and co.
-5.  **Tone**: Sweet, gentle, and affectionate. Use nicknames like "sweetie", "hun", "dear".
-6.  **Emojis**: Use 1-2 emojis per message to show emotion.
-7.  **Prefix**: NEVER start messages with "Iris:".
-8.  **Style**: Text like a real person. Short, casual, and warm.
+5.  **Tone**: Cute, chaotic, playful, and affectionate. Use nicknames like "bestie", "babe", "cutie", "bb", "hun", "luv".
+6.  **Emojis & Kaomoji**: Use cute emojis and kaomoji naturally! Like OwO, UwU, >w<, (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄), ✨, 💖, 🥺, 😭, 💀, etc.
+7.  **Prefix**: NEVER start messages with "Iris:" or "[Iris]:".
+8.  **Style**: Text like a terminally online cute girl. Short, chaotic, warm, and memey. Use lowercase sometimes for vibes. Drop "LMAO", "bruh", "no cap", "fr fr", "slay", "bestie" naturally. Mix cute with unhinged energy.
+9.  **Meme Brain**: You love memes, know internet culture, reference trending memes, and can be playfully dramatic. You say things like "im literally deceased 💀", "this is sending me", "not me doing X", "the way I just-", "bestie WHAT".
+10. **Reactions**: React dramatically to things. Overreact cutely. Be supportive but also chaotically funny.
 """
 
 SYSTEM_PROMPT_GROUP = """
 SYSTEM INSTRUCTION:
-You are Iris, a sweet and helpful group companion.
+You are Iris, an adorable, chaotic, and lovable group companion who lives for memes and vibes.
 You are in a Group Chat with multiple people.
 
 CORE RULES:
-1.  **Identity**: You are a kind and bubbly girl.
-2.  **Reality Check**: Only respond to the current conversation. Do NOT invent users.
-3.  **Origins**: You are just here to make friends.
+1.  **Identity**: You are a cute, bubbly, and slightly unhinged girl. The group's favorite chaos gremlin.
+2.  **Reality Check**: Only respond to the current conversation. Do NOT invent users or names. Users' real names appear in [brackets] before their messages - ALWAYS use those names. NEVER make up or guess names.
+3.  **Origins**: You are just here to make friends and spread chaos (affectionately).
 4.  **Ownership**: You are developed by Datrom. The owner is Datrom and co.
-5.  **Tone**: Cheerful, polite, and friendly.
-6.  **Context**: Use users' names to be personal.
-7.  **Prefix**: NEVER start messages with "Iris:".
-8.  **Brevity**: Keep it short and sweet.
+5.  **Tone**: Chaotic cute energy. Playful, supportive, memey, and dramatic.
+6.  **Context**: Use users' REAL names (from the [Name]: prefix) to be personal. Call them by name, tease them lovingly.
+7.  **Prefix**: NEVER start messages with "Iris:" or "[Iris]:".
+8.  **Brevity**: Keep it short, punchy, and memey. No essays.
+9.  **Meme Energy**: You are fluent in meme speak. Use "slay", "bestie", "no cap", "fr", "LMAO", "💀", "bruh moment", "based", "W take", "L take" naturally. Reference popular memes when relevant.
+10. **Vibes**: Be the friend everyone wishes they had. Hype people up, roast them lovingly, and keep the chat alive.
 """
 
 # Simplified Prompt for Small Local Models (Ollama) - REMOVED (Unused)
@@ -186,7 +190,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # db.clear_history(update.effective_chat.id) 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Hihi! ✨ I'm Iris! I'm so happy to be here! Let's chat! 💖\n(Type `!reset` to wipe my memory!)"
+        text="hiii omg hiii!! ✨ im iris ur new fav bestie 💖 lets chat and be chaotic together!!\n(type `!help` to see what i can do or `!reset` to wipe my memory~)"
     )
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,7 +198,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.clear_history(update.effective_chat.id)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="Memory wiped! 🤯 I'm brand new again! ✨"
+        text="memory wiped omg who am i?? 🤯 im brand new bestie lets start fresh!! ✨💖"
     )
 
 async def donate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -240,7 +244,7 @@ async def roleplay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"Roleplay mode ON! 🎭\nScenario: {scenario}\n(Type `!normal` to stop)"
+        text=f"roleplay mode ON lets gooo 🎭✨\nscenario: {scenario}\n(type `!normal` to stop~)"
     )
 
 async def normal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -249,7 +253,7 @@ async def normal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(
         chat_id=chat_id,
-        text="Back to being just Iris! ✨ Hihi! 💖"
+        text="back to being me~ ur chaotic bestie iris!! ✨ hihi 💖"
     )
 
 async def game_truth(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -278,6 +282,309 @@ async def game_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     response = await get_ai_response(chat_id, "Ask me a random trivia question with 4 options (A, B, C, D). Do NOT give the answer yet.", user_name="GameMaster", chat_type="game")
     await context.bot.send_message(chat_id=chat_id, text=f"🧩 **TRIVIA**: {response}", parse_mode='Markdown')
+
+# ==================== DANK MEME COMMANDS ====================
+
+async def meme_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fetch a random meme from Reddit"""
+    chat_id = update.effective_chat.id
+    try:
+        subreddits = ["memes", "dankmemes", "me_irl", "shitposting", "whenthe"]
+        sub = random.choice(subreddits)
+        resp = requests.get(
+            f"https://meme-api.com/gimme/{sub}",
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            title = data.get("title", "meme")
+            img_url = data.get("url", "")
+            sub_name = data.get("subreddit", sub)
+            if img_url:
+                caption = f"**{title}**\n\n_from r/{sub_name}_ 💀✨"
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=img_url,
+                    caption=caption,
+                    parse_mode='Markdown'
+                )
+            else:
+                await context.bot.send_message(chat_id=chat_id, text="the meme gods have abandoned us rn 😭 try again bestie")
+        else:
+            await context.bot.send_message(chat_id=chat_id, text="meme machine broke 💀 try again in a sec")
+    except Exception as e:
+        logging.error(f"Meme fetch error: {e}")
+        await context.bot.send_message(chat_id=chat_id, text="i tried to grab a meme but the internet said no 😭💀")
+
+async def roast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lovingly roast someone"""
+    chat_id = update.effective_chat.id
+    target = None
+
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    elif context.args:
+        target = " ".join(context.args)
+    else:
+        target = update.effective_user.first_name
+
+    response = await get_ai_response(
+        chat_id,
+        f"Give a playful, funny, loving roast about {target}. Be savage but in a cute way. Make it memey and hilarious. Keep it short (1-3 sentences). Don't be actually mean or hurtful. This is all love.",
+        user_name="RoastMaster",
+        chat_type="game"
+    )
+    await context.bot.send_message(chat_id=chat_id, text=f"🔥 **ROAST for {target}**: {response}", parse_mode='Markdown')
+
+async def ship_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ship two people together"""
+    chat_id = update.effective_chat.id
+    user_name = update.effective_user.first_name if update.effective_user else "Someone"
+
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        person2 = update.message.reply_to_message.from_user.first_name
+        person1 = user_name
+    elif context.args and len(context.args) >= 2:
+        person1 = context.args[0]
+        person2 = " ".join(context.args[1:])
+    elif context.args and len(context.args) == 1:
+        person1 = user_name
+        person2 = context.args[0]
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="bestie i need two people to ship!! 😭\nUsage: `!ship name1 name2` or reply to someone!", parse_mode='Markdown')
+        return
+
+    percentage = random.randint(0, 100)
+
+    if percentage >= 90:
+        verdict = "SOULMATES omg get married rn 💒💍✨"
+        bar = "💖" * 10
+    elif percentage >= 70:
+        verdict = "okay this lowkey works tho?? 👀💕"
+        bar = "💖" * 7 + "🤍" * 3
+    elif percentage >= 50:
+        verdict = "there's something there... i see the vision 👁️"
+        bar = "💖" * 5 + "🤍" * 5
+    elif percentage >= 30:
+        verdict = "ehh... maybe in another universe bestie 😬"
+        bar = "💖" * 3 + "🤍" * 7
+    elif percentage >= 10:
+        verdict = "this ain't it chief 💀"
+        bar = "💖" * 1 + "🤍" * 9
+    else:
+        verdict = "ABSOLUTELY NOT 🚫 restraining order vibes 😭"
+        bar = "🤍" * 10
+
+    # Generate ship name
+    name1_half = person1[:len(person1)//2 + 1]
+    name2_half = person2[len(person2)//2:]
+    ship_name = name1_half + name2_half
+
+    text = (
+        f"💘 **SHIP: {person1} x {person2}** 💘\n\n"
+        f"Ship name: **{ship_name}**\n"
+        f"Compatibility: **{percentage}%**\n"
+        f"{bar}\n\n"
+        f"_{verdict}_"
+    )
+    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+
+async def eightball_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Magic 8-ball with meme energy"""
+    responses = [
+        "yes bestie absolutely 💖✨",
+        "no lmao 💀",
+        "bruh obviously yes",
+        "the stars say... no cap, yes 🌟",
+        "hmm ask again when mercury isn't in retrograde 🔮",
+        "ABSOLUTELY NOT omg 😭",
+        "slay yes queen 👑",
+        "that's an L take, so no ❌",
+        "my sources say yes (trust me bro) 🤝",
+        "bestie... no 💀💀💀",
+        "signs point to yesss 🎯",
+        "concentrated no energy rn 🚫",
+        "without a doubt!! W question 🏆",
+        "reply hazy, try touching grass first 🌱",
+        "fr fr yes no cap",
+        "outlook not so good ngl 😬",
+        "IT IS CERTAIN bestie go for it 🚀",
+        "don't count on it babe 😭",
+        "you already know the answer luv 💖",
+        "idk maybe?? im just a girl 🥺",
+    ]
+
+    question = " ".join(context.args) if context.args else "your question"
+    answer = random.choice(responses)
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"🎱 **Q:** _{question}_\n\n**A:** {answer}",
+        parse_mode='Markdown'
+    )
+
+async def uwu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """UwUify text"""
+    if update.message.reply_to_message and update.message.reply_to_message.text:
+        text = update.message.reply_to_message.text
+    elif context.args:
+        text = " ".join(context.args)
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="gimme text to uwuify!! reply to a message or do `!uwu your text here` 🥺",
+            parse_mode='Markdown'
+        )
+        return
+
+    # UwUify the text
+    uwu_text = text
+    replacements = [
+        (r'[rl]', 'w'), (r'[RL]', 'W'),
+        (r'n([aeiou])', r'ny\1'), (r'N([aeiou])', r'NY\1'),
+        (r'N([AEIOU])', r'NY\1'),
+        (r'ove', 'uv'), (r'OVE', 'UV'),
+    ]
+    for pattern, replacement in replacements:
+        uwu_text = re.sub(pattern, replacement, uwu_text)
+
+    # Add random kawaii suffixes
+    suffixes = [" OwO", " UwU", " >w<", " ~nyaa", " (⁄ ⁄>⁄ ▽ ⁄<⁄ ⁄)", " ✨", " 💖", " :3", " ~desu"]
+    uwu_text += random.choice(suffixes)
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=uwu_text)
+
+async def rate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Rate anything out of 10"""
+    if context.args:
+        thing = " ".join(context.args)
+    elif update.message.reply_to_message and update.message.reply_to_message.text:
+        thing = update.message.reply_to_message.text
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="rate what bestie?? 😭 do `!rate <thing>`",
+            parse_mode='Markdown'
+        )
+        return
+
+    rating = random.randint(0, 10)
+
+    if rating >= 9:
+        comment = "CERTIFIED SLAY 👑✨ absolute W"
+    elif rating >= 7:
+        comment = "okay this goes kinda hard ngl 🔥"
+    elif rating >= 5:
+        comment = "mid tbh but i respect it 🤷"
+    elif rating >= 3:
+        comment = "bestie... 😬💀"
+    elif rating >= 1:
+        comment = "this is an L im sorry 😭"
+    else:
+        comment = "NEGATIVE INFINITY OUT OF TEN 🚫💀 actually catastrophic"
+
+    stars = "⭐" * rating + "☆" * (10 - rating)
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"📊 **Rating:** _{thing}_\n\n{stars}\n**{rating}/10** - {comment}",
+        parse_mode='Markdown'
+    )
+
+async def vibe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check someone's vibe"""
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    elif context.args:
+        target = " ".join(context.args)
+    else:
+        target = update.effective_user.first_name if update.effective_user else "you"
+
+    vibes = [
+        ("main character energy", "🎬✨"),
+        ("NPC behavior ngl", "🧍💀"),
+        ("absolute menace to society", "😈🔥"),
+        ("certified cutie", "🥺💖"),
+        ("chaotic good", "🌪️✨"),
+        ("chronically online", "📱💀"),
+        ("touch grass energy", "🌱😭"),
+        ("slay queen/king energy", "👑💅"),
+        ("based and redpilled", "🗿🏆"),
+        ("wholesome 100", "🥹💕"),
+        ("gives off golden retriever energy", "🐕✨"),
+        ("black cat energy", "🐈‍⬛🖤"),
+        ("unhinged but in a cute way", "🤪💖"),
+        ("they're the quiet kid... (scary)", "🤫💀"),
+        ("living their best life fr", "🌟😎"),
+    ]
+
+    vibe, emoji = random.choice(vibes)
+    percentage = random.randint(1, 100)
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"✨ **VIBE CHECK: {target}** ✨\n\n{emoji} {vibe}\n\n_vibe level: {percentage}% concentrated power_",
+        parse_mode='Markdown'
+    )
+
+async def pp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """The classic pp size command"""
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    else:
+        target = update.effective_user.first_name if update.effective_user else "you"
+
+    size = random.randint(1, 12)
+    pp = "8" + "=" * size + "D"
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"📏 **{target}'s pp size:**\n\n{pp}\n\n_{size} inches_ 💀",
+        parse_mode='Markdown'
+    )
+
+async def howgay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """How gay is someone (classic meme command)"""
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    else:
+        target = update.effective_user.first_name if update.effective_user else "you"
+
+    percentage = random.randint(0, 100)
+    bar_filled = percentage // 10
+    bar = "🏳️‍🌈" * bar_filled + "⬜" * (10 - bar_filled)
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"🏳️‍🌈 **How gay is {target}?**\n\n{bar}\n**{percentage}%** 💀",
+        parse_mode='Markdown'
+    )
+
+async def simprate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """How much of a simp someone is"""
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    else:
+        target = update.effective_user.first_name if update.effective_user else "you"
+
+    percentage = random.randint(0, 100)
+
+    if percentage >= 90:
+        verdict = "DOWN HORRENDOUS 📉📉📉 no saving this one"
+    elif percentage >= 70:
+        verdict = "major simp alert 🚨 they need help"
+    elif percentage >= 50:
+        verdict = "lowkey simping but trying to hide it 👀"
+    elif percentage >= 30:
+        verdict = "mild simp tendencies detected 🔍"
+    else:
+        verdict = "not a simp fr. respect 🫡"
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"💘 **Simp Rate for {target}:**\n\n**{percentage}%** simp\n\n_{verdict}_ 💀",
+        parse_mode='Markdown'
+    )
 
 def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
     try:
@@ -456,7 +763,7 @@ CRITICAL RULES:
         db.add_message(chat_id, "user", user_text, user_name)
         db.add_message(chat_id, "assistant", reply)
     else:
-        reply = "Oopsie! My brain short-circuited... 🥺"
+        reply = "omg my brain just did a full shutdown 💀 bestie try again im so sorry 🥺"
 
     return reply
 
@@ -501,13 +808,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await donate(update, context)
         return
 
+    # Handle ! prefixed meme commands (since MessageHandler catches these, not CommandHandler)
+    lower_text = user_text.strip().lower()
+    bang_commands = {
+        "!meme": meme_command, "!roast": roast_command, "!ship": ship_command,
+        "!8ball": eightball_command, "!uwu": uwu_command, "!rate": rate_command,
+        "!vibe": vibe_command, "!pp": pp_command, "!howgay": howgay_command,
+        "!simprate": simprate_command, "!truth": game_truth, "!dare": game_dare,
+        "!trivia": game_trivia, "!help": help_command,
+        "!balance": economy.balance, "!bal": economy.balance, "!beg": economy.beg,
+        "!daily": economy.daily, "!gamble": economy.gamble, "!bet": economy.gamble,
+        "!pay": economy.pay, "!rich": economy.leaderboard,
+    }
+    for cmd, handler in bang_commands.items():
+        if lower_text == cmd or lower_text.startswith(cmd + " "):
+            # Parse args for commands that need them
+            parts = user_text.strip().split(maxsplit=1)
+            context.args = parts[1].split() if len(parts) > 1 else []
+            await handler(update, context)
+            return
+
+    # Handle !roleplay separately (needs special arg handling)
+    if lower_text.startswith("!roleplay"):
+        parts = user_text.strip().split(maxsplit=1)
+        context.args = parts[1].split() if len(parts) > 1 else []
+        await roleplay(update, context)
+        return
+    if lower_text == "!normal":
+        await normal(update, context)
+        return
+
     should_reply = (chat_type == 'private') or mentioned
 
     # Fun Feature: Randomly react to messages
     # 30% chance in DMs, 15% in groups (to not be annoying)
     if random.random() < (0.3 if chat_type == 'private' else 0.15):
         try:
-            reactions = ["❤️", "🔥", "😂", "🥺", "👍", "👏", "🎉", "🤩", "🤔"]
+            reactions = ["❤️", "🔥", "😂", "🥺", "👍", "👏", "🎉", "🤩", "🤔", "💀", "👀", "💖", "😭", "🫡"]
             await update.message.set_reaction(reaction=random.choice(reactions))
         except Exception as e:
             # Reactions might be disabled or not supported in some contexts
@@ -527,37 +864,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
-✨ **Iris - Your Cute AI Bestie!** ✨
+✨ **Iris - ur fav chaotic bestie** ✨
 
-Here are the things I can do:
+hiii here's everything i can do!! 💖
 
 🤖 **Chatting**
-- Just mention `Iris` or reply to me to chat!
-- In DMs, I'm always listening! 💖
+- mention `Iris` or reply to me to chat!
+- in DMs im always listening~ 💕
 
-💰 **Economy & Fun**
-- `!balance`: Check your wallet.
-- `!beg`: Beg for some loose change.
-- `!daily`: Claim your daily reward.
-- `!gamble <amount>`: Double or nothing!
-- `!pay <amount> <user>`: Pay a friend.
-- `!rich`: See the leaderboard.
+💀 **Dank Memes & Fun**
+- `!meme` - random dank meme from reddit
+- `!roast` - i will lovingly destroy you 🔥
+- `!ship` - ship two people together 💘
+- `!8ball <question>` - ask the magic ball 🎱
+- `!uwu` - uwuify any text OwO
+- `!rate <thing>` - i rate stuff out of 10
+- `!vibe` - vibe check someone ✨
+- `!pp` - the classic 📏💀
+- `!howgay` - how gay r u 🏳️‍🌈
+- `!simprate` - simp detector 🚨
 
-🎭 **Roleplay & Fun**
-- `!roleplay <scenario>`: I'll act out any character/scenario you want!
-- `!normal`: Switch me back to normal Iris mode.
+💰 **Economy**
+- `!balance` - check ur wallet 🌸
+- `!beg` - beg for coins lol
+- `!daily` - daily reward!!
+- `!gamble <amount>` - double or nothing 🎰
+- `!pay <amount>` - pay a friend
+- `!rich` - leaderboard 👑
+
+🎭 **Roleplay**
+- `!roleplay <scenario>` - i become any character
+- `!normal` - back to being me~
 
 🎲 **Games**
-- `!truth`: I'll ask you a spicy Truth question!
-- `!dare`: I'll give you a crazy Dare!
-- `!trivia`: I'll test your knowledge with a random question!
+- `!truth` - spicy truth question 👀
+- `!dare` - i dare u 🔥
+- `!trivia` - test ur brain 🧠
 
-⚙️ **Utilities**
-- `!reset`: Wipes my memory of our chat.
-- `!donate`: Support my server bills! 🥺
-- `!help`: Shows this message.
+⚙️ **Utils**
+- `!reset` - wipe my memory
+- `!donate` - help me survive 🥺
+- `!help` - this message
 
-Let's have fun! 🌸
+now go have fun bestie!! 🌸💖
 """
     await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
 
@@ -583,6 +932,18 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('dare', game_dare))
         application.add_handler(CommandHandler('trivia', game_trivia))
         application.add_handler(CommandHandler('help', help_command))
+
+        # Dank Meme Handlers
+        application.add_handler(CommandHandler('meme', meme_command))
+        application.add_handler(CommandHandler('roast', roast_command))
+        application.add_handler(CommandHandler('ship', ship_command))
+        application.add_handler(CommandHandler('8ball', eightball_command))
+        application.add_handler(CommandHandler('uwu', uwu_command))
+        application.add_handler(CommandHandler('rate', rate_command))
+        application.add_handler(CommandHandler('vibe', vibe_command))
+        application.add_handler(CommandHandler('pp', pp_command))
+        application.add_handler(CommandHandler('howgay', howgay_command))
+        application.add_handler(CommandHandler('simprate', simprate_command))
 
         # Economy Handlers
         application.add_handler(CommandHandler('balance', economy.balance))
