@@ -179,7 +179,7 @@ CORE RULES:
 
 # History management
 # We now use db.py for persistent storage
-MAX_HISTORY = 30  # Keep last 20 messages for context
+MAX_HISTORY = 10  # Reduced to 10 for speed on CPU VPS (was 30)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Don't reset history on start/!iris anymore

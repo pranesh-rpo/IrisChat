@@ -1,10 +1,10 @@
-FROM qwen2.5:3b
-# Switched to Qwen 2.5 (3B)
-# This model is SOTA for small models, follows instructions strictly, and hallucinates less than Llama.
+FROM llama3.2:1b
+# Switched to llama3.2 (1B) for MAXIMUM SPEED
+# This is the fastest model available (smaller than 3B).
 
 # Iris Personality Parameter
-PARAMETER temperature 0.7
-PARAMETER top_k 50
+PARAMETER temperature 0.6
+PARAMETER top_k 40
 PARAMETER top_p 0.9
 
 # System Prompt (Baked in identity)

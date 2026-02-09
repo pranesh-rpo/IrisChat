@@ -11,9 +11,9 @@ if ! command -v ollama &> /dev/null; then
     exit 1
 fi
 
-# 2. Pull Base Model (Qwen 2.5 3B - Best Instruction Following & Low Hallucination)
-echo "📥 Pulling base model (qwen2.5:3b)..."
-ollama pull qwen2.5:3b
+# 2. Pull Base Model (Llama 3.2 1B - The Speed Demon)
+echo "📥 Pulling base model (llama3.2:1b)..."
+ollama pull llama3.2:1b
 
 # 3. Create 'iris' model
 echo "🔨 Creating 'iris' model from Modelfile..."
