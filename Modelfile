@@ -1,9 +1,8 @@
-FROM llama3.2
-# Switched to llama3.2 (3B) for SPEED as requested
-# 8B is too slow for CPU VPS
+FROM qwen2.5:3b
+# Switched to Qwen 2.5 (3B)
+# This model is SOTA for small models, follows instructions strictly, and hallucinates less than Llama.
 
 # Iris Personality Parameter
-# Reduced to 0.7 to prevent hallucinations on the smaller model
 PARAMETER temperature 0.7
 PARAMETER top_k 50
 PARAMETER top_p 0.9
