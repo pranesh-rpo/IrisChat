@@ -424,6 +424,7 @@ CRITICAL RULES:
         system_prompt = f"SYSTEM INSTRUCTION: You are running a game. \nGAME: {persona_prompt}\n\nBe fun, fair, and engaging."
     else:
         # Normal mode
+        # Llama 3.1 8B is smart enough for the full persona prompt!
         system_prompt = SYSTEM_PROMPT_DM if chat_type == "private" else SYSTEM_PROMPT_GROUP
 
     # Get history from DB
