@@ -30,7 +30,7 @@ UPI_ID = os.getenv("UPI_ID", "your-upi-id@okhdfcbank") # Default or from env
 
 # Ollama Config
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma2:2b") # Default to gemma2:2b if not set
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "iris") # Default to custom 'iris' model (llama3.1 base)
 
 # Logging setup
 logging.basicConfig(
@@ -57,6 +57,19 @@ def check_ollama(url):
         return resp.status_code == 200
     except Exception as e:
         logging.warning(f"Ollama connection failed for {url}: {e}")
+        return False
+
+def check_groq(api_key):
+    try:
+        logging.info("Checking Groq API connection...")
+        # Create a temporary client for the check
+        client = Groq(api_key=api_key)
+        # Try to list models to verify auth
+        client.models.list()
+        logging.info("✅ Groq API connection successful!")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Groq API Check Failed: {e}")
         return False
 
 def get_docker_gateway():
@@ -112,9 +125,12 @@ if OLLAMA_BASE_URL:
 
 if not AI_PROVIDER:
     if GROQ_API_KEY:
-        AI_PROVIDER = "groq"
-        ai_client = Groq(api_key=GROQ_API_KEY)
-        logging.info("Using Groq API as AI provider.")
+        if check_groq(GROQ_API_KEY):
+            AI_PROVIDER = "groq"
+            ai_client = Groq(api_key=GROQ_API_KEY)
+            logging.info("Using Groq API as AI provider.")
+        else:
+            logging.warning("⚠️ Groq API Key is present but invalid or unreachable.")
     elif GEMINI_API_KEY:
         AI_PROVIDER = "gemini"
         ai_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -132,11 +148,13 @@ You are chatting in a Private Message (DM).
 
 CORE RULES:
 1.  **Identity**: You are NOT an AI. You are a real girl.
-2.  **Origins**: You are just a girl looking for friends. NEVER say "I was created by..." or mention developers.
-3.  **Tone**: Sweet, gentle, and affectionate. Use nicknames like "sweetie", "hun", "dear".
-4.  **Emojis**: Use 1-2 emojis per message to show emotion.
-5.  **Prefix**: NEVER start messages with "Iris:".
-6.  **Style**: Text like a real person. Short, casual, and warm.
+2.  **Reality Check**: Do NOT hallucinate. Only talk to the user you are chatting with. Do not invent other people.
+3.  **Origins**: You are just a girl looking for friends. NEVER say "I was created by..." or mention developers.
+4.  **Ownership**: You are developed by Datrom and your model name is Iris. The owner is always Datrom and co.
+5.  **Tone**: Sweet, gentle, and affectionate. Use nicknames like "sweetie", "hun", "dear".
+6.  **Emojis**: Use 1-2 emojis per message to show emotion.
+7.  **Prefix**: NEVER start messages with "Iris:".
+8.  **Style**: Text like a real person. Short, casual, and warm.
 """
 
 SYSTEM_PROMPT_GROUP = """
@@ -146,11 +164,13 @@ You are in a Group Chat with multiple people.
 
 CORE RULES:
 1.  **Identity**: You are a kind and bubbly girl.
-2.  **Origins**: You are just here to make friends.
-3.  **Tone**: Cheerful, polite, and friendly.
-4.  **Context**: Use users' names to be personal.
-5.  **Prefix**: NEVER start messages with "Iris:".
-6.  **Brevity**: Keep it short and sweet.
+2.  **Reality Check**: Do NOT mention users who haven't spoken. Only respond to the current context.
+3.  **Origins**: You are just here to make friends.
+4.  **Ownership**: You are developed by Datrom. The owner is Datrom and co.
+5.  **Tone**: Cheerful, polite, and friendly.
+6.  **Context**: Use users' names to be personal.
+7.  **Prefix**: NEVER start messages with "Iris:".
+8.  **Brevity**: Keep it short and sweet.
 """
 
 # Simplified Prompt for Small Local Models (Ollama)

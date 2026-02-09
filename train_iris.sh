@@ -11,9 +11,9 @@ if ! command -v ollama &> /dev/null; then
     exit 1
 fi
 
-# 2. Pull Base Model (Llama 3.2 3B - Fast & Smart)
-echo "📥 Pulling base model (llama3.2:3b)..."
-ollama pull llama3.2:3b
+# 2. Pull Base Model (Llama 3.2 3B - Fast for CPU)
+echo "📥 Pulling base model (llama3.2)..."
+ollama pull llama3.2
 
 # 3. Create 'iris' model
 echo "🔨 Creating 'iris' model from Modelfile..."
