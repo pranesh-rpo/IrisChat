@@ -778,14 +778,14 @@ async def get_mistral_response(user_text, history, user_name=None, system_prompt
         reply = completion.choices[0].message.content
         
         # Clean up
-         if reply:
-             reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
-             reply = re.sub(r'^\w+:\s*', '', reply)
-             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-             # New: Remove brackets around names in the middle of sentences
-             reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
-             
-         return reply
+        if reply:
+            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
+            reply = re.sub(r'^\w+:\s*', '', reply)
+            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+            # New: Remove brackets around names in the middle of sentences
+            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
+            
+        return reply
         
     except Exception as e:
         logging.error(f"Mistral API Error: {e}")
