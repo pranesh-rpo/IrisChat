@@ -972,5 +972,6 @@ if __name__ == '__main__':
         application.add_handler(start_handler)
         application.add_handler(msg_handler)
         
-        print(f"Iris is waking up with {AI_PROVIDER}... ✨ Press Ctrl+C to stop.")
+        providers_str = ", ".join(ENABLED_PROVIDERS) if ENABLED_PROVIDERS else "NO AI BRAIN"
+        print(f"Iris is waking up with {providers_str}... ✨ Press Ctrl+C to stop.")
         application.run_polling()
