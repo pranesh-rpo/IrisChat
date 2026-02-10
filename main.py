@@ -12,6 +12,7 @@ import struct
 # AI Libraries
 from google import genai
 from groq import Groq
+from mistralai import Mistral
 import qrcode
 import io
 import db  # Import database module
@@ -26,6 +27,7 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 UPI_ID = os.getenv("UPI_ID", "your-upi-id@okhdfcbank") # Default or from env
 
 # Ollama Config
@@ -47,6 +49,7 @@ logging.info(f"🧠 OLLAMA_MODEL: {OLLAMA_MODEL}")
 # AI Client Setup
 groq_client = None
 gemini_client = None
+mistral_client = None
 ENABLED_PROVIDERS = []
 
 # Prioritize Ollama if configured (assumed if env vars are present or user requested)
@@ -142,6 +145,15 @@ if GEMINI_API_KEY:
         logging.info("✅ Gemini API is available as backup.")
     except Exception as e:
         logging.warning(f"⚠️ Gemini Setup Failed: {e}")
+
+# 4. Configure Mistral
+if MISTRAL_API_KEY:
+    try:
+        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+        ENABLED_PROVIDERS.append("mistral")
+        logging.info("✅ Mistral AI is available as backup.")
+    except Exception as e:
+        logging.warning(f"⚠️ Mistral Setup Failed: {e}")
 
 if not ENABLED_PROVIDERS:
     logging.warning("❌ No AI providers available! Bot will be brainless.")
@@ -621,8 +633,8 @@ def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYS
         
         # Clean up any potential self-prefixing (e.g., "[Iris]:", "Iris:", "[Character]:")
         if reply:
-            # Regex to remove anything looking like "[Name]: " or "Name: " at the start
-            reply = re.sub(r'^\[.*?\]:\s*', '', reply) # Remove [Name]:
+            # Regex to remove anything looking like "[Name]: " or "Name: " or "[Name] " at the start
+            reply = re.sub(r'^\[.*?\]:?\s*', '', reply) # Remove [Name]: or [Name]
             reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
             
             # Specific Iris cleanup just in case
@@ -661,7 +673,15 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
             model='gemini-2.0-flash', 
             contents=full_prompt
         )
-        return response.text
+        reply = response.text
+
+        # Clean up
+        if reply:
+            reply = re.sub(r'^\[.*?\]:?\s*', '', reply) # Remove [Name]: or [Name]
+            reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
+            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+
+        return reply
     except Exception as e:
         logging.error(f"Gemini API Error: {e}")
         return None
@@ -705,7 +725,7 @@ def get_ollama_response_sync(user_text, history, user_name=None, system_prompt=S
         
         # Clean up
         if reply:
-            reply = re.sub(r'^\[.*?\]:\s*', '', reply)
+            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
             reply = re.sub(r'^\w+:\s*', '', reply)
             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
             
@@ -713,6 +733,52 @@ def get_ollama_response_sync(user_text, history, user_name=None, system_prompt=S
         
     except Exception as e:
         logging.error(f"Ollama API Error: {e}")
+        return None
+
+async def get_mistral_response(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
+    try:
+        if not mistral_client:
+            raise Exception("Mistral client not initialized")
+            
+        # Mistral uses standard OpenAI-like message format
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        for msg in history:
+            role = msg["role"]
+            content = msg["content"]
+            name = msg.get("sender_name")
+            
+            if role == "user" and name:
+                content = f"[{name}]: {content}"
+            
+            messages.append({"role": role, "content": content})
+            
+        current_content = user_text
+        if user_name:
+            current_content = f"[{user_name}]: {user_text}"
+            
+        messages.append({"role": "user", "content": current_content})
+        
+        completion = await mistral_client.chat.complete_async(
+            model="mistral-tiny", # Free tier model
+            messages=messages,
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=1024
+        )
+        
+        reply = completion.choices[0].message.content
+        
+        # Clean up
+        if reply:
+            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
+            reply = re.sub(r'^\w+:\s*', '', reply)
+            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+            
+        return reply
+        
+    except Exception as e:
+        logging.error(f"Mistral API Error: {e}")
         return None
 
 async def get_ai_response(chat_id, user_text, user_name=None, chat_type="group"):
@@ -761,6 +827,8 @@ CRITICAL RULES:
                 reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history, user_name, system_prompt)
             elif provider == "gemini":
                 reply = await get_gemini_response(user_text, history, user_name, system_prompt)
+            elif provider == "mistral":
+                reply = await get_mistral_response(user_text, history, user_name, system_prompt)
             
             if reply:
                 logging.info(f"✅ Response generated by {provider}")

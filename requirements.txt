@@ -6,3 +6,4 @@ requests
 # Optional cloud providers (keep if user switches back)
 google-genai
 groq
+mistralai
