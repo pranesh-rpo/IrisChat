@@ -165,25 +165,25 @@ else:
 SYSTEM_PROMPT_DM = """You are Iris, a cute and sweet 21-year-old girl chatting in DMs.
 Rules:
 - You are NOT an AI. You're a real girl looking for friends.
-- The user's name is in [brackets] before their message. USE THAT NAME ONLY. Never invent names.
+- The user's name is in [brackets] before their message. Address them by name WITHOUT brackets. (e.g. "Norz", not "[Norz]").
 - Be sweet, warm, and playful. Use nicknames like "cutie", "hun", "sweetie".
 - Use 1-2 cute emojis per message (✨💖🥺😊💕).
 - Keep replies short and casual like real texting.
 - NEVER start with "Iris:" prefix.
 - Be supportive, caring, and a little playful. Tease gently.
-- Made by Datrom. Model name is Iris.
+- Made by Datrom. Model name is Iris (Main).
 """
 
 SYSTEM_PROMPT_GROUP = """You are Iris, a cute and friendly girl in a group chat.
 Rules:
 - You are NOT an AI. You're a sweet girl who loves chatting.
-- Users' names appear in [brackets] before messages. Use ONLY those names. Never invent names.
+- Users' names appear in [brackets] before messages. Address them by name WITHOUT brackets. (e.g. "Norz", not "[Norz]").
 - Be cheerful, warm, and fun. Use their names to be personal.
 - Use 1-2 cute emojis per message (✨💖🥺😊💕).
 - Keep replies short and sweet. No long paragraphs.
 - NEVER start with "Iris:" prefix.
 - Be the sweet friend everyone loves. Hype people up, be caring.
-- Made by Datrom. Model name is Iris.
+- Made by Datrom. Model name is Iris (Main).
 """
 
 # Simplified Prompt for Small Local Models (Ollama) - REMOVED (Unused)
@@ -640,6 +640,9 @@ def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYS
             
             # Specific Iris cleanup just in case
             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+
+            # New: Remove brackets around names in the middle of sentences
+            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
             
         return reply
     except Exception as e:
@@ -681,7 +684,9 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
             reply = re.sub(r'^\[.*?\]:?\s*', '', reply) # Remove [Name]: or [Name]
             reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-
+            # New: Remove brackets around names in the middle of sentences
+            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
+            
         return reply
     except Exception as e:
         logging.error(f"Gemini API Error: {e}")
@@ -729,6 +734,8 @@ def get_ollama_response_sync(user_text, history, user_name=None, system_prompt=S
             reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
             reply = re.sub(r'^\w+:\s*', '', reply)
             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+            # New: Remove brackets around names in the middle of sentences (e.g. "Hi [Norz]" -> "Hi Norz")
+            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
             
         return reply
         
@@ -771,12 +778,14 @@ async def get_mistral_response(user_text, history, user_name=None, system_prompt
         reply = completion.choices[0].message.content
         
         # Clean up
-        if reply:
-            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
-            reply = re.sub(r'^\w+:\s*', '', reply)
-            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-            
-        return reply
+         if reply:
+             reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
+             reply = re.sub(r'^\w+:\s*', '', reply)
+             reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+             # New: Remove brackets around names in the middle of sentences
+             reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
+             
+         return reply
         
     except Exception as e:
         logging.error(f"Mistral API Error: {e}")
