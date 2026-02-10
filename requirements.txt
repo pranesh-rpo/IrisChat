@@ -1,5 +1,4 @@
 python-telegram-bot==20.8
-httpx>=0.27.0,<0.28.0
 python-dotenv
 qrcode
 Pillow
@@ -7,4 +6,4 @@ requests
 # Optional cloud providers (keep if user switches back)
 google-genai
 groq
-mistralai>=1.0.0
+mistralai<1.0.0

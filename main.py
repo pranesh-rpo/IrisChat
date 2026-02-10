@@ -12,7 +12,8 @@ import struct
 # AI Libraries
 from google import genai
 from groq import Groq
-from mistralai import Mistral
+from mistralai.async_client import MistralAsyncClient
+from mistralai.models.chat_completion import ChatMessage
 import qrcode
 import io
 import db  # Import database module
@@ -149,7 +150,7 @@ if GEMINI_API_KEY:
 # 4. Configure Mistral
 if MISTRAL_API_KEY:
     try:
-        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+        mistral_client = MistralAsyncClient(api_key=MISTRAL_API_KEY)
         ENABLED_PROVIDERS.append("mistral")
         logging.info("✅ Mistral AI is available as backup.")
     except Exception as e:
@@ -740,8 +741,8 @@ async def get_mistral_response(user_text, history, user_name=None, system_prompt
         if not mistral_client:
             raise Exception("Mistral client not initialized")
             
-        # Mistral uses standard OpenAI-like message format
-        messages = [{"role": "system", "content": system_prompt}]
+        # Mistral uses ChatMessage objects
+        messages = [ChatMessage(role="system", content=system_prompt)]
         
         for msg in history:
             role = msg["role"]
@@ -751,15 +752,15 @@ async def get_mistral_response(user_text, history, user_name=None, system_prompt
             if role == "user" and name:
                 content = f"[{name}]: {content}"
             
-            messages.append({"role": role, "content": content})
+            messages.append(ChatMessage(role=role, content=content))
             
         current_content = user_text
         if user_name:
             current_content = f"[{user_name}]: {user_text}"
             
-        messages.append({"role": "user", "content": current_content})
+        messages.append(ChatMessage(role="user", content=current_content))
         
-        completion = await mistral_client.chat.complete_async(
+        completion = await mistral_client.chat(
             model="mistral-tiny", # Free tier model
             messages=messages,
             temperature=0.7,
