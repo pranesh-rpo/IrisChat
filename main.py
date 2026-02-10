@@ -45,8 +45,9 @@ logging.info(f"🌍 OLLAMA_BASE_URL: {OLLAMA_BASE_URL}")
 logging.info(f"🧠 OLLAMA_MODEL: {OLLAMA_MODEL}")
 
 # AI Client Setup
-ai_client = None
-AI_PROVIDER = None
+groq_client = None
+gemini_client = None
+ENABLED_PROVIDERS = []
 
 # Prioritize Ollama if configured (assumed if env vars are present or user requested)
 # Check if we can reach Ollama
@@ -91,10 +92,11 @@ def get_docker_gateway():
     
     return "172.17.0.1" # Fallback
 
+# 1. Configure Ollama
 if OLLAMA_BASE_URL:
     if check_ollama(OLLAMA_BASE_URL):
-        AI_PROVIDER = "ollama"
-        logging.info(f"Using Ollama ({OLLAMA_MODEL}) as AI provider.")
+        ENABLED_PROVIDERS.append("ollama")
+        logging.info(f"✅ Using Ollama ({OLLAMA_MODEL}) as primary provider.")
     # Auto-fallback for Linux Docker
     elif "host.docker.internal" in OLLAMA_BASE_URL:
         logging.info("Ollama connection failed. Attempting to detect Docker Gateway...")
@@ -104,41 +106,47 @@ if OLLAMA_BASE_URL:
         fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", gateway_ip)
         
         if check_ollama(fallback_url):
-            AI_PROVIDER = "ollama"
+            ENABLED_PROVIDERS.append("ollama")
             OLLAMA_BASE_URL = fallback_url
-            logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Gateway URL: {OLLAMA_BASE_URL}")
+            logging.info(f"✅ Using Ollama ({OLLAMA_MODEL}) via Gateway URL: {OLLAMA_BASE_URL}")
         
         # 2. If detected failed and it wasn't 172.17.0.1, try standard 172.17.0.1
         elif gateway_ip != "172.17.0.1":
              logging.info("Detected gateway failed. Trying standard 172.17.0.1...")
              fallback_url = OLLAMA_BASE_URL.replace("host.docker.internal", "172.17.0.1")
              if check_ollama(fallback_url):
-                AI_PROVIDER = "ollama"
+                ENABLED_PROVIDERS.append("ollama")
                 OLLAMA_BASE_URL = fallback_url
-                logging.info(f"Using Ollama ({OLLAMA_MODEL}) via Standard URL: {OLLAMA_BASE_URL}")
+                logging.info(f"✅ Using Ollama ({OLLAMA_MODEL}) via Standard URL: {OLLAMA_BASE_URL}")
              else:
-                logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
+                logging.warning("Ollama fallback failed.")
         else:
-             logging.warning("Ollama fallback failed. Falling back to Cloud APIs.")
+             logging.warning("Ollama fallback failed.")
     else:
-        logging.warning("Ollama is not responding. Falling back to Cloud APIs.")
+        logging.warning("Ollama is not responding.")
 
-if not AI_PROVIDER:
-    if GROQ_API_KEY:
-        if check_groq(GROQ_API_KEY):
-            AI_PROVIDER = "groq"
-            ai_client = Groq(api_key=GROQ_API_KEY)
-            logging.info("Using Groq API as AI provider.")
-        else:
-            logging.warning("⚠️ Groq API Key is present but invalid or unreachable.")
-    elif GEMINI_API_KEY:
-        AI_PROVIDER = "gemini"
-        ai_client = genai.Client(api_key=GEMINI_API_KEY)
-        logging.info("Using Gemini API as AI provider.")
+# 2. Configure Groq
+if GROQ_API_KEY:
+    if check_groq(GROQ_API_KEY):
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        ENABLED_PROVIDERS.append("groq")
+        logging.info("✅ Groq API is available as backup.")
     else:
-        logging.warning("No AI API key found (OLLAMA, GEMINI, or GROQ). AI features will not work.")
+        logging.warning("⚠️ Groq API Key is present but invalid or unreachable.")
 
-logging.info(f"✅ Final AI Provider: {AI_PROVIDER}")
+# 3. Configure Gemini
+if GEMINI_API_KEY:
+    try:
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        ENABLED_PROVIDERS.append("gemini")
+        logging.info("✅ Gemini API is available as backup.")
+    except Exception as e:
+        logging.warning(f"⚠️ Gemini Setup Failed: {e}")
+
+if not ENABLED_PROVIDERS:
+    logging.warning("❌ No AI providers available! Bot will be brainless.")
+else:
+    logging.info(f"🚀 Active AI Providers (in order): {', '.join(ENABLED_PROVIDERS)}")
 
 # Personality System Prompts
 SYSTEM_PROMPT_DM = """You are Iris, a cute and sweet 21-year-old girl chatting in DMs.
@@ -597,7 +605,10 @@ def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYS
             
         messages.append({"role": "user", "content": current_content})
 
-        completion = ai_client.chat.completions.create(
+        if not groq_client:
+            raise Exception("Groq client not initialized")
+
+        completion = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
             temperature=0.9,
@@ -628,6 +639,9 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
         # Convert history to Gemini format if needed, but the new SDK is flexible.
         # Simple content generation:
         
+        if not gemini_client:
+            raise Exception("Gemini client not initialized")
+
         full_prompt = f"{system_prompt}\n\n"
         for msg in history:
             role = msg["role"]
@@ -643,7 +657,7 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
         else:
             full_prompt += f"{user_text}\n"
 
-        response = ai_client.models.generate_content(
+        response = gemini_client.models.generate_content(
             model='gemini-2.0-flash', 
             contents=full_prompt
         )
@@ -702,9 +716,7 @@ def get_ollama_response_sync(user_text, history, user_name=None, system_prompt=S
         return None
 
 async def get_ai_response(chat_id, user_text, user_name=None, chat_type="group"):
-    # If no provider is set but we have a client (Groq/Gemini), it's fine.
-    # But if provider is Ollama, ai_client is None.
-    if not AI_PROVIDER:
+    if not ENABLED_PROVIDERS:
          return "I'm having trouble thinking right now. 😵‍💫 (No AI Provider)"
 
     # Get chat settings
@@ -737,15 +749,29 @@ CRITICAL RULES:
     
     reply = None
 
-    if AI_PROVIDER == "groq":
-        loop = asyncio.get_running_loop()
-        reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history, user_name, system_prompt)
-    elif AI_PROVIDER == "ollama":
-        loop = asyncio.get_running_loop()
-        reply = await loop.run_in_executor(None, get_ollama_response_sync, user_text, history, user_name, system_prompt)
-    elif AI_PROVIDER == "gemini":
-        reply = await get_gemini_response(user_text, history, user_name, system_prompt)
-    
+    # Try providers in order
+    for provider in ENABLED_PROVIDERS:
+        try:
+            logging.info(f"🤔 Thinking with {provider}...")
+            if provider == "ollama":
+                loop = asyncio.get_running_loop()
+                reply = await loop.run_in_executor(None, get_ollama_response_sync, user_text, history, user_name, system_prompt)
+            elif provider == "groq":
+                loop = asyncio.get_running_loop()
+                reply = await loop.run_in_executor(None, get_groq_response_sync, user_text, history, user_name, system_prompt)
+            elif provider == "gemini":
+                reply = await get_gemini_response(user_text, history, user_name, system_prompt)
+            
+            if reply:
+                logging.info(f"✅ Response generated by {provider}")
+                break # Stop if successful
+            else:
+                logging.warning(f"⚠️ {provider} returned empty response. Trying next...")
+        
+        except Exception as e:
+            logging.error(f"❌ Error with {provider}: {e}")
+            continue # Try next provider
+
     if reply:
         # Save interaction to DB
         db.add_message(chat_id, "user", user_text, user_name)
