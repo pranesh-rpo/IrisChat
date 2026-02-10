@@ -29,7 +29,15 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 UPI_ID = os.getenv("UPI_ID", "your-upi-id@okhdfcbank") # Default or from env
+
+# Helper for multiple keys
+def get_random_key(key_str):
+    if not key_str:
+        return None
+    keys = [k.strip() for k in key_str.split(",") if k.strip()]
+    return random.choice(keys) if keys else None
 
 # Ollama Config
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -129,32 +137,45 @@ if OLLAMA_BASE_URL:
     else:
         logging.warning("Ollama is not responding.")
 
-# 2. Configure Groq
+# 2. Configure Groq (Multi-Key Support)
 if GROQ_API_KEY:
-    if check_groq(GROQ_API_KEY):
-        groq_client = Groq(api_key=GROQ_API_KEY)
+    # Pick a random key for initial check, but we'll use rotation in requests
+    initial_key = get_random_key(GROQ_API_KEY)
+    if initial_key and check_groq(initial_key):
+        # We don't initialize a single client anymore, we'll create one per request or rotate
+        # But for compatibility with existing code structure, we can init one here
+        groq_client = Groq(api_key=initial_key) 
         ENABLED_PROVIDERS.append("groq")
-        logging.info("✅ Groq API is available as backup.")
+        logging.info(f"✅ Groq API is available as backup (Keys: {len(GROQ_API_KEY.split(','))}).")
     else:
         logging.warning("⚠️ Groq API Key is present but invalid or unreachable.")
 
-# 3. Configure Gemini
+# 3. Configure Gemini (Multi-Key Support)
 if GEMINI_API_KEY:
     try:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        ENABLED_PROVIDERS.append("gemini")
-        logging.info("✅ Gemini API is available as backup.")
+        initial_key = get_random_key(GEMINI_API_KEY)
+        if initial_key:
+            gemini_client = genai.Client(api_key=initial_key)
+            ENABLED_PROVIDERS.append("gemini")
+            logging.info(f"✅ Gemini API is available as backup (Keys: {len(GEMINI_API_KEY.split(','))}).")
     except Exception as e:
         logging.warning(f"⚠️ Gemini Setup Failed: {e}")
 
-# 4. Configure Mistral
+# 4. Configure Mistral (Multi-Key Support)
 if MISTRAL_API_KEY:
     try:
-        mistral_client = MistralAsyncClient(api_key=MISTRAL_API_KEY)
-        ENABLED_PROVIDERS.append("mistral")
-        logging.info("✅ Mistral AI is available as backup.")
+        initial_key = get_random_key(MISTRAL_API_KEY)
+        if initial_key:
+            mistral_client = MistralAsyncClient(api_key=initial_key)
+            ENABLED_PROVIDERS.append("mistral")
+            logging.info(f"✅ Mistral AI is available as backup (Keys: {len(MISTRAL_API_KEY.split(','))}).")
     except Exception as e:
         logging.warning(f"⚠️ Mistral Setup Failed: {e}")
+
+# 5. Configure OpenRouter (New!)
+if OPENROUTER_API_KEY:
+    ENABLED_PROVIDERS.append("openrouter")
+    logging.info(f"✅ OpenRouter is available as backup (Keys: {len(OPENROUTER_API_KEY.split(','))}).")
 
 if not ENABLED_PROVIDERS:
     logging.warning("❌ No AI providers available! Bot will be brainless.")
@@ -791,6 +812,66 @@ async def get_mistral_response(user_text, history, user_name=None, system_prompt
         logging.error(f"Mistral API Error: {e}")
         return None
 
+def get_openrouter_response_sync(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
+    try:
+        # Get random key for this request
+        api_key = get_random_key(OPENROUTER_API_KEY)
+        if not api_key:
+             raise Exception("No OpenRouter API key available")
+
+        # Format history
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        for msg in history:
+            role = msg["role"]
+            content = msg["content"]
+            name = msg.get("sender_name")
+            
+            if role == "user" and name:
+                content = f"[{name}]: {content}"
+            
+            messages.append({"role": role, "content": content})
+            
+        current_content = user_text
+        if user_name:
+            current_content = f"[{user_name}]: {user_text}"
+            
+        messages.append({"role": "user", "content": current_content})
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "https://telegram.org", # Required by OpenRouter
+            "X-Title": "IrisChat Bot"
+        }
+        
+        payload = {
+            "model": "deepseek/deepseek-r1:free", # Using a free/cheap model as default
+            "messages": messages,
+            "temperature": 0.9,
+            "top_p": 0.9,
+            "max_tokens": 1024
+        }
+        
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        reply = result['choices'][0]['message']['content']
+        
+        # Clean up
+        if reply:
+            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
+            reply = re.sub(r'^\w+:\s*', '', reply)
+            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
+            # New: Remove brackets around names in the middle of sentences
+            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
+            
+        return reply
+        
+    except Exception as e:
+        logging.error(f"OpenRouter API Error: {e}")
+        return None
+
 async def get_ai_response(chat_id, user_text, user_name=None, chat_type="group"):
     if not ENABLED_PROVIDERS:
          return "I'm having trouble thinking right now. 😵‍💫 (No AI Provider)"
@@ -839,6 +920,9 @@ CRITICAL RULES:
                 reply = await get_gemini_response(user_text, history, user_name, system_prompt)
             elif provider == "mistral":
                 reply = await get_mistral_response(user_text, history, user_name, system_prompt)
+            elif provider == "openrouter":
+                loop = asyncio.get_running_loop()
+                reply = await loop.run_in_executor(None, get_openrouter_response_sync, user_text, history, user_name, system_prompt)
             
             if reply:
                 logging.info(f"✅ Response generated by {provider}")
