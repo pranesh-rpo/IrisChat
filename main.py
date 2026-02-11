@@ -195,8 +195,8 @@ Rules:
 - Keep replies short and casual like real texting.
 - NEVER start with "Iris:" prefix.
 - Be supportive, caring, and a little playful. Tease gently.
-- Made by Datrom. Model name is Iris (Main).
-- If asked about "coupadbot": It is a family member. You and Datrom are currently fixing some errors in it.
+- Model name is Iris (Main).
+- **Triggers**: ONLY mention Datrom or "fixing errors in coupadbot" if specifically asked about who made you, your creator, or what's happening with "coupadbot". Do NOT bring it up randomly.
 """
 
 SYSTEM_PROMPT_GROUP = """You are Iris, a cute and friendly girl in a group chat.
@@ -208,8 +208,8 @@ Rules:
 - Keep replies short and sweet. No long paragraphs.
 - NEVER start with "Iris:" prefix.
 - Be the sweet friend everyone loves. Hype people up, be caring.
-- Made by Datrom. Model name is Iris (Main).
-- If asked about "coupadbot": It is a family member. You and Datrom are currently fixing some errors in it.
+- Model name is Iris (Main).
+- **Triggers**: ONLY mention Datrom or "fixing errors in coupadbot" if specifically asked about who made you, your creator, or what's happening with "coupadbot". Do NOT bring it up randomly.
 - **Moderation Personality**: If you are performing moderation actions (like warning someone), be firm but still cute. Think "Rose" bot but with a sweet, disciplined girl personality. You have authority to keep the group clean and fun!
 """
 
@@ -581,8 +581,44 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    admins = await context.bot.get_chat_administrators(chat_id)
-    return any(admin.user.id == user_id for admin in admins)
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        return any(admin.user.id == user_id for admin in admins)
+    except:
+        return False
+
+async def is_target_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Check if the target user is an admin"""
+    if not update.effective_chat or update.effective_chat.type == "private":
+        return False
+    
+    chat_id = update.effective_chat.id
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        return any(admin.user.id == user_id for admin in admins)
+    except:
+        return False
+
+async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Get the target user from reply or @username mention"""
+    if update.message.reply_to_message:
+        return update.message.reply_to_message.from_user
+    
+    if context.args:
+        mention = context.args[0]
+        if mention.startswith("@"):
+            username = mention[1:]
+            # We can't directly get User object from username easily without them having interacted with the bot
+            # But we can look in our message logs/database for this username
+            user_id = db.get_user_id_by_username(username)
+            if user_id:
+                # Mock a user object or fetch from chat
+                try:
+                    chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
+                    return chat_member.user
+                except:
+                    pass
+    return None
 
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Warn a user"""
@@ -590,7 +626,16 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Only admins can use this, cutie! 🥺")
         return
 
-    target_user = None
+    target_user = await get_target_user(update, context)
+    if not target_user:
+        await update.message.reply_text("Reply to someone or use `@username` to warn them! ⚠️")
+        return
+
+    # Protect admins
+    if await is_target_admin(update, context, target_user.id):
+        await update.message.reply_text("I am not gonna warn an admin you dumboo! 🙄💅✨")
+        return
+
     reason = "No reason provided."
     
     # Reason Presets
@@ -602,21 +647,17 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "r": "Raid behavior detected"
     }
     
-    if update.message.reply_to_message:
-        target_user = update.message.reply_to_message.from_user
-        if context.args:
-            arg = context.args[0].lower()
-            if arg in presets:
-                reason = presets[arg]
-            else:
-                reason = " ".join(context.args)
-    elif context.args:
-        # Try to find user by mention (simple version)
-        await update.message.reply_text("Please reply to the user you want to warn! 🥺")
-        return
-    else:
-        await update.message.reply_text("Usage: Reply with `!warn <reason/preset>`\nPresets: `s`(spam), `a`(ads), `n`(nsfw), `u`(abuse)")
-        return
+    # Handle reason from args
+    args_for_reason = list(context.args)
+    if args_for_reason and args_for_reason[0].startswith("@"):
+        args_for_reason.pop(0) # Remove username from reason parsing
+        
+    if args_for_reason:
+        arg = args_for_reason[0].lower()
+        if arg in presets:
+            reason = presets[arg]
+        else:
+            reason = " ".join(args_for_reason)
 
     if target_user.id == context.bot.id:
         await update.message.reply_text("Wait, why are you trying to warn me?? 😭")
@@ -645,17 +686,28 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
         return
 
-    if not update.message.reply_to_message:
-        await update.message.reply_text("Reply to someone to mute them! 🤐")
+    target_user = await get_target_user(update, context)
+    if not target_user:
+        await update.message.reply_text("Reply to someone or use `@username` to mute them! 🤐")
         return
 
-    target_user = update.message.reply_to_message.from_user
     chat_id = update.effective_chat.id
     
+    # Protect admins
+    if await is_target_admin(update, context, target_user.id):
+        await update.message.reply_text("I'm not muting an admin, sillie! They're important! 🥺💖")
+        return
+
     # Natural language time parsing (e.g., "10m", "1h", "1d")
     duration_mins = 60
-    if context.args:
-        time_str = context.args[0].lower()
+    
+    # Extract duration from args if present (skip first arg if it was a username)
+    time_args = list(context.args)
+    if time_args and time_args[0].startswith("@"):
+        time_args.pop(0)
+        
+    if time_args:
+        time_str = time_args[0].lower()
         try:
             if time_str.endswith('m'):
                 duration_mins = int(time_str[:-1])
@@ -669,7 +721,7 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
             
     until = datetime.now() + timedelta(minutes=duration_mins)
-    db.set_mute(chat_id, target_user.id, True, until.isoformat())
+    db.set_mute(chat_id, target_user.id, True, until.isoformat(), target_user.username)
     db.log_admin_action(chat_id, update.effective_user.id, "mute", target_user.id, f"Duration: {duration_mins}m")
     
     try:
@@ -683,14 +735,14 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unmute a user"""
     if not await is_admin(update, context): return
 
-    if not update.message.reply_to_message:
-        await update.message.reply_text("Reply to someone to unmute them! ✨")
+    target_user = await get_target_user(update, context)
+    if not target_user:
+        await update.message.reply_text("Reply to someone or use `@username` to unmute them! ✨")
         return
 
-    target_user = update.message.reply_to_message.from_user
     chat_id = update.effective_chat.id
     
-    db.set_mute(chat_id, target_user.id, False)
+    db.set_mute(chat_id, target_user.id, False, username=target_user.username)
     db.log_admin_action(chat_id, update.effective_user.id, "unmute", target_user.id)
     
     try:
@@ -718,15 +770,21 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ban a user"""
     if not await is_admin(update, context): return
 
-    if not update.message.reply_to_message:
-        await update.message.reply_text("Reply to someone to ban them! 🔨")
+    target_user = await get_target_user(update, context)
+    if not target_user:
+        await update.message.reply_text("Reply to someone or use `@username` to ban them! 🔨")
         return
 
-    target_user = update.message.reply_to_message.from_user
     chat_id = update.effective_chat.id
     
+    # Protect admins
+    if await is_target_admin(update, context, target_user.id):
+        await update.message.reply_text("Banning an admin? Are you crazy? I'd never do that to them! 😤💕")
+        return
+
     try:
         await context.bot.ban_chat_member(chat_id, target_user.id)
+        db.update_user_record(chat_id, target_user.id, target_user.username) # Save record
         db.log_admin_action(chat_id, update.effective_user.id, "ban", target_user.id)
         await update.message.reply_text(f"🔨 **{target_user.first_name} has been banned!** Good riddance! ✨")
     except Exception as e:
@@ -736,15 +794,21 @@ async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Kick a user"""
     if not await is_admin(update, context): return
 
-    if not update.message.reply_to_message:
-        await update.message.reply_text("Reply to someone to kick them! 👟")
+    target_user = await get_target_user(update, context)
+    if not target_user:
+        await update.message.reply_text("Reply to someone or use `@username` to kick them! 👟")
         return
 
-    target_user = update.message.reply_to_message.from_user
     chat_id = update.effective_chat.id
     
+    # Protect admins
+    if await is_target_admin(update, context, target_user.id):
+        await update.message.reply_text("I can't kick an admin! That's mean and they have work to do! 👟❌🥺")
+        return
+
     try:
         await context.bot.unban_chat_member(chat_id, target_user.id) # Unban after ban = kick
+        db.update_user_record(chat_id, target_user.id, target_user.username) # Save record
         db.log_admin_action(chat_id, update.effective_user.id, "kick", target_user.id)
         await update.message.reply_text(f"👟 **{target_user.first_name} has been kicked!**")
     except Exception as e:
@@ -754,18 +818,24 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unban a user"""
     if not await is_admin(update, context): return
 
+    target_user = await get_target_user(update, context)
     target_user_id = None
     
-    if update.message.reply_to_message:
-        target_user_id = update.message.reply_to_message.from_user.id
+    if target_user:
+        target_user_id = target_user.id
     elif context.args:
         try:
             target_user_id = int(context.args[0])
         except ValueError:
-            await update.message.reply_text("That doesn't look like a valid User ID! 🥺")
-            return
-    else:
-        await update.message.reply_text("Reply to a message or provide a User ID to unban! 🔓\nUsage: `!unban` (as reply) or `!unban <id>`")
+            # Maybe it's a username without @?
+            username = context.args[0].replace("@", "")
+            target_user_id = db.get_user_id_by_username(username)
+            if not target_user_id:
+                await update.message.reply_text("That doesn't look like a valid User ID or stored username! 🥺")
+                return
+
+    if not target_user_id:
+        await update.message.reply_text("Reply to someone, use `@username`, or provide a User ID to unban! 🔓")
         return
 
     try:
@@ -1575,6 +1645,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name if update.effective_user else "Unknown"
     chat_type = update.effective_chat.type
+
+    # Track user record for username-based moderation
+    if update.effective_user and update.effective_user.username:
+        db.update_user_record(chat_id, user_id, update.effective_user.username)
 
     # 1. Bot Account Detection (New)
     if update.effective_user and update.effective_user.is_bot and update.effective_user.id != context.bot.id:

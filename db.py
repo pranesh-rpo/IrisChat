@@ -81,6 +81,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS moderation (
                 chat_id INTEGER,
                 user_id INTEGER,
+                username TEXT,
                 warns INTEGER DEFAULT 0,
                 is_muted BOOLEAN DEFAULT 0,
                 mute_until TIMESTAMP,
@@ -89,6 +90,12 @@ def init_db():
                 PRIMARY KEY (chat_id, user_id)
             )
         ''')
+        
+        # Migration: Add username if it doesn't exist
+        try:
+            cursor.execute('ALTER TABLE moderation ADD COLUMN username TEXT')
+        except sqlite3.OperationalError:
+            pass
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS mod_settings (
@@ -231,18 +238,19 @@ def get_warns(chat_id, user_id):
         logging.error(f"Error getting warns: {e}")
         return 0
 
-def add_warn(chat_id, user_id, reason=None):
-    """Increment warning count for a user."""
+def add_warn(chat_id, user_id, reason=None, username=None):
+    """Increment warning count for a user and return the total count."""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO moderation (chat_id, user_id, warns, reason)
-            VALUES (?, ?, 1, ?)
+            INSERT INTO moderation (chat_id, user_id, warns, reason, username)
+            VALUES (?, ?, 1, ?, ?)
             ON CONFLICT(chat_id, user_id) DO UPDATE SET
                 warns = warns + 1,
-                reason = excluded.reason
-        ''', (chat_id, user_id, reason))
+                reason = COALESCE(excluded.reason, moderation.reason),
+                username = COALESCE(excluded.username, moderation.username)
+        ''', (chat_id, user_id, reason, username))
         conn.commit()
         cursor.execute('SELECT warns FROM moderation WHERE chat_id = ? AND user_id = ?', (chat_id, user_id))
         count = cursor.fetchone()[0]
@@ -263,18 +271,19 @@ def reset_warns(chat_id, user_id):
     except Exception as e:
         logging.error(f"Error resetting warns: {e}")
 
-def set_mute(chat_id, user_id, is_muted, until=None):
+def set_mute(chat_id, user_id, is_muted, until=None, username=None):
     """Set mute status for a user."""
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO moderation (chat_id, user_id, is_muted, mute_until)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO moderation (chat_id, user_id, is_muted, mute_until, username)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(chat_id, user_id) DO UPDATE SET
                 is_muted = excluded.is_muted,
-                mute_until = excluded.mute_until
-        ''', (chat_id, user_id, is_muted, until))
+                mute_until = excluded.mute_until,
+                username = COALESCE(excluded.username, moderation.username)
+        ''', (chat_id, user_id, is_muted, until, username))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -300,6 +309,43 @@ def is_muted(chat_id, user_id):
     except Exception as e:
         logging.error(f"Error checking mute: {e}")
         return False
+
+def get_user_id_by_username(username):
+    """Get a user's ID from their username (looks in moderation and messages)."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        
+        # Check moderation table first (most likely to have clean username data)
+        cursor.execute('SELECT user_id FROM moderation WHERE username = ? OR username = ?', (username, username.lower()))
+        result = cursor.fetchone()
+        if result:
+            conn.close()
+            return result[0]
+            
+        # Check messages table (where we store sender_name, but that's usually display name)
+        # We don't have a dedicated users table yet, so this is our best bet
+        conn.close()
+        return None
+    except Exception as e:
+        logging.error(f"Error getting user by username: {e}")
+        return None
+
+def update_user_record(chat_id, user_id, username):
+    """Update or create a user record in the moderation table to track username."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO moderation (chat_id, user_id, username)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                username = excluded.username
+        ''', (chat_id, user_id, username))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error updating user record: {e}")
 
 def get_mod_settings(chat_id):
     """Get moderation settings for a chat."""
