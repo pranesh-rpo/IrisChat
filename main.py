@@ -605,37 +605,59 @@ async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.reply_to_message:
         return update.message.reply_to_message.from_user
     
-    # 2. Check entities (for text_mention or direct mentions)
+    # 2. Check entities (for text_mention - users without usernames mentioned by name)
     if update.message.entities:
         for entity in update.message.entities:
             if entity.type == "text_mention":
                 return entity.user
 
-    # 3. Check context.args for @username
+    # 3. Resolve @username directly using Telegram's API
     if context.args:
         mention = context.args[0]
         if mention.startswith("@"):
-            username = mention[1:].lower()
+            username = mention # Keep the @ for get_chat
             
-            # A. Check database first
-            user_id = db.get_user_id_by_username(username)
-            if user_id:
+            try:
+                # This is the "magic" way to find a user by username without a database!
+                # It works for any user with a public username.
+                target_chat = await context.bot.get_chat(username)
+                
+                # If successful, target_chat will be a Chat object representing the user
+                # We can mock a User object from it for our commands
+                class MockUser:
+                    def __init__(self, chat):
+                        self.id = chat.id
+                        self.username = chat.username
+                        self.first_name = chat.first_name or chat.username or "Unknown"
+                        self.is_bot = False # We don't strictly know, but usually safe to assume
+                
+                user = MockUser(target_chat)
+                # Still track it in DB so we have it for later/unban
+                db.track_user(user.id, user.username, user.first_name)
+                return user
+            except Exception as e:
+                logging.debug(f"Direct API resolution failed for {username}: {e}")
+                
+                # Fallback: Check our local "phonebook" database if the API failed
+                # (API might fail if the user is private or hasn't interacted with bots)
+                clean_username = username.lstrip("@").lower()
+                user_id = db.get_user_id_by_username(clean_username)
+                if user_id:
+                    try:
+                        chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
+                        return chat_member.user
+                    except:
+                        pass
+                
+                # Second Fallback: Check admins list
                 try:
-                    chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
-                    return chat_member.user
+                    admins = await context.bot.get_chat_administrators(update.effective_chat.id)
+                    for admin in admins:
+                        if admin.user.username and admin.user.username.lower() == clean_username:
+                            db.track_user(admin.user.id, admin.user.username, admin.user.first_name)
+                            return admin.user
                 except:
                     pass
-            
-            # B. Check admins list (often contains the target if it's a bot like MissRose)
-            try:
-                admins = await context.bot.get_chat_administrators(update.effective_chat.id)
-                for admin in admins:
-                    if admin.user.username and admin.user.username.lower() == username:
-                        # Store it while we're at it
-                        db.track_user(admin.user.id, admin.user.username, admin.user.first_name)
-                        return admin.user
-            except:
-                pass
                 
     return None
 
