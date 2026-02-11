@@ -3,6 +3,7 @@ python-dotenv
 qrcode
 Pillow
 requests
+telethon
 # Optional cloud providers (keep if user switches back)
 google-genai
 groq

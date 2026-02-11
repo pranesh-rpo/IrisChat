@@ -24,6 +24,11 @@ import random # For fun features
 import requests
 import economy # Economy commands
 
+# Telethon for user account lookups
+from telethon import TelegramClient
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.errors import UsernameNotOccupiedError, UsernameInvalidError
+
 # Load environment variables
 load_dotenv()
 
@@ -34,6 +39,16 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 UPI_ID = os.getenv("UPI_ID", "your-upi-id@okhdfcbank") # Default or from env
+
+# Telethon Configuration (Optional)
+TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID")
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
+
+# Global Telethon client (will be initialized if credentials are provided)
+telethon_client = None
+
+# Anti-flood tracking: {chat_id: {user_id: [timestamp1, timestamp2, ...]}}
+flood_tracker = defaultdict(lambda: defaultdict(list))
 
 # Helper for multiple keys
 def get_random_key(key_str):
@@ -599,17 +614,69 @@ async def is_target_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     except:
         return False
 
+async def is_user_in_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Check if a user is currently in the chat"""
+    try:
+        chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
+        # Member statuses: creator, administrator, member, restricted, left, kicked
+        return chat_member.status in ['creator', 'administrator', 'member', 'restricted']
+    except Exception as e:
+        logging.warning(f"Failed to check if user {user_id} is in chat: {e}")
+        return False
+
+async def resolve_username_with_telethon(username):
+    """Use Telethon to resolve a username to a user ID and details"""
+    global telethon_client
+    
+    if not telethon_client:
+        return None
+    
+    try:
+        # Clean username
+        clean_username = username.lstrip("@")
+        
+        # Get user info via Telethon
+        user_full = await telethon_client(GetFullUserRequest(clean_username))
+        user = user_full.users[0]
+        
+        # Track this user in our database
+        db.track_user(user.id, user.username, user.first_name)
+        
+        # Return a mock user object compatible with python-telegram-bot
+        class MockUser:
+            def __init__(self, tg_user):
+                self.id = tg_user.id
+                self.username = tg_user.username
+                self.first_name = tg_user.first_name or tg_user.username or "User"
+                self.last_name = getattr(tg_user, 'last_name', None)
+                self.is_bot = getattr(tg_user, 'bot', False)
+        
+        logging.info(f"✅ Telethon resolved @{clean_username} -> User ID: {user.id}")
+        return MockUser(user)
+    
+    except (UsernameNotOccupiedError, UsernameInvalidError):
+        logging.warning(f"Telethon: Username @{username} not found")
+        return None
+    except Exception as e:
+        logging.warning(f"Telethon lookup failed for @{username}: {e}")
+        return None
+
 async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get the target user from reply or @username mention or plain username"""
     # 1. Check reply
     if update.message.reply_to_message:
-        return update.message.reply_to_message.from_user
+        target = update.message.reply_to_message.from_user
+        # Track the target user
+        db.track_user(target.id, target.username, target.first_name)
+        return target
     
     # 2. Check entities (for text_mention - users without usernames mentioned by name)
     if update.message.entities:
         for entity in update.message.entities:
             if entity.type == "text_mention":
-                return entity.user
+                target = entity.user
+                db.track_user(target.id, target.username, target.first_name)
+                return target
 
     # 3. Resolve username (with or without @)
     # We'll check all arguments for something that could be a username
@@ -625,9 +692,15 @@ async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Clean the username (remove @ if present)
         clean_username = target_username.lstrip("@").lower()
         
+        # Try Telethon first (most reliable for username lookups)
+        if telethon_client:
+            telethon_user = await resolve_username_with_telethon(clean_username)
+            if telethon_user:
+                return telethon_user
+        
         try:
             logging.info(f"Attempting to resolve target: {target_username}")
-            # Try to get the user directly via API (requires @ prefix)
+            # Try to get the user directly via Bot API (requires @ prefix)
             # Note: get_chat works for public usernames
             api_username = f"@{clean_username}" if not target_username.startswith("@") else target_username
             target_chat = await context.bot.get_chat(api_username)
@@ -645,13 +718,14 @@ async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db.track_user(user.id, user.username, user.first_name)
                 return user
         except Exception as e:
-            logging.warning(f"Direct API resolution failed for {target_username}: {e}")
+            logging.warning(f"Bot API resolution failed for {target_username}: {e}")
             
             # Fallback A: Check database
-            user_id = db.get_user_id_by_username(clean_username)
+            chat_id = update.effective_chat.id
+            user_id = db.get_user_id_by_username(clean_username, chat_id)
             if user_id:
                 try:
-                    chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
+                    chat_member = await context.bot.get_chat_member(chat_id, user_id)
                     return chat_member.user
                 except:
                     # If they are not in the chat, we can still return a mock user if we have an ID
@@ -680,9 +754,22 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Only admins can use this, cutie! 🥺")
         return
 
+    # Track the admin user
+    if update.effective_user:
+        db.track_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
+
     target_user = await get_target_user(update, context)
     if not target_user:
         await update.message.reply_text("Reply to someone or use `@username` to warn them! ⚠️")
+        return
+
+    # Track the target user
+    db.track_user(target_user.id, target_user.username, target_user.first_name)
+
+    # Check if user is in the group
+    chat_id = update.effective_chat.id
+    if not await is_user_in_chat(update, context, target_user.id):
+        await update.message.reply_text(f"Umm... {target_user.first_name} isn't even in this group anymore, silly! 🥺\nThey must have left or been removed already~ ✨")
         return
 
     # Protect admins
@@ -718,8 +805,8 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Wait, why are you trying to warn me?? 😭")
         return
 
-    chat_id = update.effective_chat.id
-    count = db.add_warn(chat_id, target_user.id, reason)
+    count = db.add_warn(chat_id, target_user.id, reason, target_user.username)
+    db.update_user_record(chat_id, target_user.id, target_user.username)
     db.log_admin_action(chat_id, update.effective_user.id, "warn", target_user.id, reason)
     settings = db.get_mod_settings(chat_id)
     
@@ -729,24 +816,76 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg, parse_mode='Markdown')
     
-    if count >= settings['warn_limit'] and settings['ban_on_limit']:
-        try:
-            await context.bot.ban_chat_member(chat_id, target_user.id)
-            await update.message.reply_text(f"❌ {target_user.first_name} reached the warn limit and was banned! 🔨")
-        except Exception as e:
-            logging.error(f"Failed to ban on warn limit: {e}")
+    # Check if user reached warn limit and execute configured action
+    if count >= settings['warn_limit']:
+        action = settings.get('warn_action', 'ban')
+        
+        if action == 'ban':
+            try:
+                await context.bot.ban_chat_member(chat_id, target_user.id)
+                await update.message.reply_text(f"❌ **{target_user.first_name} reached the warn limit and was banned!** 🔨")
+                db.log_admin_action(chat_id, update.effective_user.id, "auto_ban", target_user.id, "Warn limit reached")
+            except Exception as e:
+                logging.error(f"Failed to ban on warn limit: {e}")
+                await update.message.reply_text(f"⚠️ Failed to ban user: {e}")
+        
+        elif action == 'kick':
+            try:
+                await context.bot.unban_chat_member(chat_id, target_user.id)
+                await update.message.reply_text(f"👟 **{target_user.first_name} reached the warn limit and was kicked!**\nThey can rejoin if they behave~ ✨")
+                db.log_admin_action(chat_id, update.effective_user.id, "auto_kick", target_user.id, "Warn limit reached")
+            except Exception as e:
+                logging.error(f"Failed to kick on warn limit: {e}")
+                await update.message.reply_text(f"⚠️ Failed to kick user: {e}")
+        
+        elif action == 'mute':
+            try:
+                duration = settings.get('warn_action_duration', 60)
+                until = datetime.now() + timedelta(minutes=duration)
+                permissions = ChatPermissions(can_send_messages=False)
+                await context.bot.restrict_chat_member(chat_id, target_user.id, permissions, until_date=until)
+                await update.message.reply_text(f"🤐 **{target_user.first_name} reached the warn limit and was muted!**\nDuration: {duration} minutes")
+                db.set_mute(chat_id, target_user.id, True, until.isoformat(), target_user.username)
+                db.log_admin_action(chat_id, update.effective_user.id, "auto_mute", target_user.id, f"Warn limit reached ({duration}m)")
+            except Exception as e:
+                logging.error(f"Failed to mute on warn limit: {e}")
+                await update.message.reply_text(f"⚠️ Failed to mute user: {e}")
+        
+        elif action == 'none':
+            await update.message.reply_text(f"⚠️ **{target_user.first_name} reached the warn limit!**\nAdmins should take manual action. No automatic action is configured.")
+        
+        # Respect legacy ban_on_limit setting if warn_action is not explicitly set
+        elif settings.get('ban_on_limit', 1):
+            try:
+                await context.bot.ban_chat_member(chat_id, target_user.id)
+                await update.message.reply_text(f"❌ **{target_user.first_name} reached the warn limit and was banned!** 🔨")
+                db.log_admin_action(chat_id, update.effective_user.id, "auto_ban", target_user.id, "Warn limit reached")
+            except Exception as e:
+                logging.error(f"Failed to ban on warn limit: {e}")
 
 async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mute a user"""
     if not await is_admin(update, context):
         return
 
+    # Track the admin user
+    if update.effective_user:
+        db.track_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
+
     target_user = await get_target_user(update, context)
     if not target_user:
         await update.message.reply_text("Reply to someone or use `@username` to mute them! 🤐")
         return
 
+    # Track the target user
+    db.track_user(target_user.id, target_user.username, target_user.first_name)
+
     chat_id = update.effective_chat.id
+    
+    # Check if user is in the group
+    if not await is_user_in_chat(update, context, target_user.id):
+        await update.message.reply_text(f"Umm... {target_user.first_name} isn't even in this group anymore, sweetie! 🥺\nCan't mute someone who's already gone~ 💫")
+        return
     
     # Protect admins
     if await is_target_admin(update, context, target_user.id):
@@ -778,6 +917,7 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     until = datetime.now() + timedelta(minutes=duration_mins)
     db.set_mute(chat_id, target_user.id, True, until.isoformat(), target_user.username)
+    db.update_user_record(chat_id, target_user.id, target_user.username)
     db.log_admin_action(chat_id, update.effective_user.id, "mute", target_user.id, f"Duration: {duration_mins}m")
     
     try:
@@ -791,14 +931,25 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unmute a user"""
     if not await is_admin(update, context): return
 
+    # Track the admin user
+    if update.effective_user:
+        db.track_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
+
     target_user = await get_target_user(update, context)
     if not target_user:
         await update.message.reply_text("Reply to someone or use `@username` to unmute them! ✨")
         return
 
+    # Track the target user
+    db.track_user(target_user.id, target_user.username, target_user.first_name)
+
     chat_id = update.effective_chat.id
     
+    # Check if user is in the group (allow unmute even if they left, for admin convenience)
+    # No check here - admins might want to unmute before unbanning
+    
     db.set_mute(chat_id, target_user.id, False, username=target_user.username)
+    db.update_user_record(chat_id, target_user.id, target_user.username)
     db.log_admin_action(chat_id, update.effective_user.id, "unmute", target_user.id)
     
     try:
@@ -826,12 +977,24 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ban a user"""
     if not await is_admin(update, context): return
 
+    # Track the admin user
+    if update.effective_user:
+        db.track_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
+
     target_user = await get_target_user(update, context)
     if not target_user:
         await update.message.reply_text("Reply to someone or use `@username` to ban them! 🔨")
         return
 
+    # Track the target user
+    db.track_user(target_user.id, target_user.username, target_user.first_name)
+
     chat_id = update.effective_chat.id
+    
+    # Check if user is in the group
+    if not await is_user_in_chat(update, context, target_user.id):
+        await update.message.reply_text(f"Ummm... {target_user.first_name} already left the group, babe! 🥺\nNo need to ban someone who's not even here~ 💕")
+        return
     
     # Protect admins
     if await is_target_admin(update, context, target_user.id):
@@ -850,12 +1013,24 @@ async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Kick a user"""
     if not await is_admin(update, context): return
 
+    # Track the admin user
+    if update.effective_user:
+        db.track_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
+
     target_user = await get_target_user(update, context)
     if not target_user:
         await update.message.reply_text("Reply to someone or use `@username` to kick them! 👟")
         return
 
+    # Track the target user
+    db.track_user(target_user.id, target_user.username, target_user.first_name)
+
     chat_id = update.effective_chat.id
+    
+    # Check if user is in the group
+    if not await is_user_in_chat(update, context, target_user.id):
+        await update.message.reply_text(f"Ehehe~ {target_user.first_name} isn't in the group anymore! 🥺\nThey already left, so no kicking needed~ 👟💫")
+        return
     
     # Protect admins
     if await is_target_admin(update, context, target_user.id):
@@ -874,10 +1049,17 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unban a user"""
     if not await is_admin(update, context): return
 
+    # Track the admin user
+    if update.effective_user:
+        db.track_user(update.effective_user.id, update.effective_user.username, update.effective_user.first_name)
+
     target_user = await get_target_user(update, context)
     target_user_id = None
+    chat_id = update.effective_chat.id
     
     if target_user:
+        # Track the target user
+        db.track_user(target_user.id, target_user.username, target_user.first_name)
         target_user_id = target_user.id
     elif context.args:
         try:
@@ -885,7 +1067,7 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             # Maybe it's a username without @?
             username = context.args[0].replace("@", "")
-            target_user_id = db.get_user_id_by_username(username)
+            target_user_id = db.get_user_id_by_username(username, chat_id)
             if not target_user_id:
                 await update.message.reply_text("That doesn't look like a valid User ID or stored username! 🥺")
                 return
@@ -895,8 +1077,10 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        chat_id = update.effective_chat.id
         await context.bot.unban_chat_member(chat_id, target_user_id)
+        # Try to update user record if we have the target_user object with username
+        if target_user and target_user.username:
+            db.update_user_record(chat_id, target_user_id, target_user.username)
         db.log_admin_action(chat_id, update.effective_user.id, "unban", target_user_id)
         await update.message.reply_text(f"🔓 **User {target_user_id} has been unbanned!** Welcome back~ ✨")
     except Exception as e:
@@ -1260,6 +1444,556 @@ async def admincheck_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         await update.message.reply_text(f"Failed to check health: {e}")
 
+async def pin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pin a message"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can pin messages, cutie! 🥺")
+        return
+    
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a message to pin it! 📌")
+        return
+    
+    chat_id = update.effective_chat.id
+    message_id = update.message.reply_to_message.message_id
+    
+    # Check if silent pin (optional)
+    notify = True
+    if context.args and context.args[0].lower() in ['silent', 'quiet']:
+        notify = False
+    
+    try:
+        await context.bot.pin_chat_message(chat_id, message_id, disable_notification=not notify)
+        db.log_admin_action(chat_id, update.effective_user.id, "pin", message_id)
+        
+        if notify:
+            await update.message.reply_text("📌 **Message pinned!** Everyone will see this~ ✨")
+        else:
+            await update.message.reply_text("📌 **Message pinned silently!** No notifications sent~ 🤫")
+    except Exception as e:
+        await update.message.reply_text(f"Failed to pin message: {e}")
+
+async def unpin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unpin a message or all messages"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can unpin messages, cutie! 🥺")
+        return
+    
+    chat_id = update.effective_chat.id
+    
+    # Check if unpinning all
+    if context.args and context.args[0].lower() == 'all':
+        try:
+            await context.bot.unpin_all_chat_messages(chat_id)
+            db.log_admin_action(chat_id, update.effective_user.id, "unpin_all")
+            await update.message.reply_text("📌 **All pinned messages removed!** Fresh start~ ✨")
+        except Exception as e:
+            await update.message.reply_text(f"Failed to unpin all: {e}")
+        return
+    
+    # Unpin specific message (need reply) or most recent
+    message_id = None
+    if update.message.reply_to_message:
+        message_id = update.message.reply_to_message.message_id
+    
+    try:
+        if message_id:
+            await context.bot.unpin_chat_message(chat_id, message_id)
+        else:
+            await context.bot.unpin_chat_message(chat_id)
+        
+        db.log_admin_action(chat_id, update.effective_user.id, "unpin", message_id)
+        await update.message.reply_text("📌 **Message unpinned!** ✨")
+    except Exception as e:
+        await update.message.reply_text(f"Failed to unpin: {e}")
+
+async def promote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Promote a user to admin"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can promote users, cutie! 🥺")
+        return
+    
+    target_user = await get_target_user(update, context)
+    if not target_user:
+        await update.message.reply_text("Reply to someone or use `@username` to promote them! 👑")
+        return
+    
+    chat_id = update.effective_chat.id
+    
+    # Custom title (optional)
+    title = None
+    if context.args and len(context.args) > 1:
+        title = " ".join(context.args[1:])[:16]  # Telegram limit is 16 chars
+    
+    try:
+        # Grant standard admin permissions
+        await context.bot.promote_chat_member(
+            chat_id,
+            target_user.id,
+            can_delete_messages=True,
+            can_restrict_members=True,
+            can_pin_messages=True,
+            can_manage_chat=True
+        )
+        
+        # Set custom title if provided
+        if title:
+            await context.bot.set_chat_administrator_custom_title(chat_id, target_user.id, title)
+        
+        db.log_admin_action(chat_id, update.effective_user.id, "promote", target_user.id, title or "")
+        
+        msg = f"👑 **{target_user.first_name} has been promoted to admin!**"
+        if title:
+            msg += f"\n**Title:** {title}"
+        msg += "\n\nWelcome to the team~ 💕"
+        
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"Failed to promote: {e}")
+
+async def demote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Demote an admin to regular user"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can demote users, cutie! 🥺")
+        return
+    
+    target_user = await get_target_user(update, context)
+    if not target_user:
+        await update.message.reply_text("Reply to someone or use `@username` to demote them! 👤")
+        return
+    
+    chat_id = update.effective_chat.id
+    
+    try:
+        await context.bot.promote_chat_member(
+            chat_id,
+            target_user.id,
+            can_change_info=False,
+            can_delete_messages=False,
+            can_invite_users=False,
+            can_restrict_members=False,
+            can_pin_messages=False,
+            can_promote_members=False,
+            can_manage_chat=False
+        )
+        
+        db.log_admin_action(chat_id, update.effective_user.id, "demote", target_user.id)
+        await update.message.reply_text(f"👤 **{target_user.first_name} has been demoted to regular member.**\nThey can still chat normally~ ✨")
+    except Exception as e:
+        await update.message.reply_text(f"Failed to demote: {e}")
+
+async def announce_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send an announcement message"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can make announcements, cutie! 🥺")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("Usage: `!announce <message>`\n\nExample: `!announce Meeting at 8 PM!`", parse_mode='Markdown')
+        return
+    
+    chat_id = update.effective_chat.id
+    announcement = " ".join(context.args)
+    
+    msg = f"📢 **ANNOUNCEMENT** 📢\n\n{announcement}\n\n_— From the admins_ 💕"
+    
+    try:
+        sent_message = await context.bot.send_message(chat_id, msg, parse_mode='Markdown')
+        # Auto-pin announcements
+        await context.bot.pin_chat_message(chat_id, sent_message.message_id, disable_notification=False)
+        
+        db.log_admin_action(chat_id, update.effective_user.id, "announce", reason=announcement[:100])
+        
+        # Delete the command message
+        try:
+            await update.message.delete()
+        except:
+            pass
+    except Exception as e:
+        await update.message.reply_text(f"Failed to send announcement: {e}")
+
+async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Display group rules"""
+    chat_id = update.effective_chat.id
+    rules = db.get_note(chat_id, "rules")
+    
+    if rules:
+        await update.message.reply_text(f"📜 **Group Rules**\n\n{rules}", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("📜 No rules set yet!\n\nAdmins can set rules with `!setrules`", parse_mode='Markdown')
+
+async def setrules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set group rules (admin only)"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can set rules, cutie! 🥺")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("Usage: `!setrules <rules text>`\n\nExample: `!setrules 1. Be respectful\\n2. No spam\\n3. Have fun!`", parse_mode='Markdown')
+        return
+    
+    chat_id = update.effective_chat.id
+    rules_text = " ".join(context.args)
+    
+    if db.save_note(chat_id, "rules", rules_text, update.effective_user.id):
+        await update.message.reply_text("✅ **Rules updated!**\nEveryone can see them with `!rules` 📜", parse_mode='Markdown')
+        db.log_admin_action(chat_id, update.effective_user.id, "setrules")
+    else:
+        await update.message.reply_text("Failed to save rules! 😢")
+
+async def note_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Get a saved note"""
+    if not context.args:
+        await update.message.reply_text("Usage: `!note <name>`\n\nExample: `!note welcome`\nSee all notes with `!notes`", parse_mode='Markdown')
+        return
+    
+    chat_id = update.effective_chat.id
+    note_name = context.args[0]
+    note_content = db.get_note(chat_id, note_name)
+    
+    if note_content:
+        await update.message.reply_text(f"📝 **{note_name}**\n\n{note_content}", parse_mode='Markdown')
+    else:
+        await update.message.reply_text(f"❌ Note `{note_name}` not found!\nSee all notes with `!notes`", parse_mode='Markdown')
+
+async def notes_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all saved notes"""
+    chat_id = update.effective_chat.id
+    all_notes = db.get_all_notes(chat_id)
+    
+    if all_notes:
+        note_list = "\n".join([f"• `{name}`" for name, _ in all_notes])
+        msg = f"📝 **Saved Notes** ({len(all_notes)})\n\n{note_list}\n\n_Use `!note <name>` to view a note_"
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    else:
+        await update.message.reply_text("📝 No notes saved yet!\n\nAdmins can save notes with `!savenote`", parse_mode='Markdown')
+
+async def savenote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save a note (admin only)"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can save notes, cutie! 🥺")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: `!savenote <name> <content>`\n\nExample: `!savenote welcome Welcome to our group!`", parse_mode='Markdown')
+        return
+    
+    chat_id = update.effective_chat.id
+    note_name = context.args[0]
+    note_content = " ".join(context.args[1:])
+    
+    if db.save_note(chat_id, note_name, note_content, update.effective_user.id):
+        await update.message.reply_text(f"✅ **Note saved!**\nUse `!note {note_name}` to view it 📝", parse_mode='Markdown')
+        db.log_admin_action(chat_id, update.effective_user.id, "savenote", reason=note_name)
+    else:
+        await update.message.reply_text("Failed to save note! 😢")
+
+async def delnote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Delete a note (admin only)"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can delete notes, cutie! 🥺")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("Usage: `!delnote <name>`\n\nExample: `!delnote welcome`", parse_mode='Markdown')
+        return
+    
+    chat_id = update.effective_chat.id
+    note_name = context.args[0]
+    
+    if db.delete_note(chat_id, note_name):
+        await update.message.reply_text(f"✅ **Note `{note_name}` deleted!** 🗑️", parse_mode='Markdown')
+        db.log_admin_action(chat_id, update.effective_user.id, "delnote", reason=note_name)
+    else:
+        await update.message.reply_text(f"❌ Note `{note_name}` not found!", parse_mode='Markdown')
+
+async def groupstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show group statistics"""
+    chat_id = update.effective_chat.id
+    
+    try:
+        # Get chat info
+        chat = await context.bot.get_chat(chat_id)
+        member_count = await context.bot.get_chat_member_count(chat_id)
+        admins = await context.bot.get_chat_administrators(chat_id)
+        admin_count = len([a for a in admins if not a.user.is_bot])
+        
+        # Get database stats
+        import sqlite3
+        conn = sqlite3.connect(db.DB_FILE)
+        cursor = conn.cursor()
+        
+        # Total messages logged
+        cursor.execute('SELECT COUNT(*) FROM chat_history WHERE chat_id = ?', (chat_id,))
+        total_messages = cursor.fetchone()[0]
+        
+        # Unique users
+        cursor.execute('SELECT COUNT(DISTINCT user_id) FROM chat_history WHERE chat_id = ?', (chat_id,))
+        unique_users = cursor.fetchone()[0]
+        
+        # Top 5 most active users
+        cursor.execute('''
+            SELECT user_id, COUNT(*) as msg_count 
+            FROM chat_history 
+            WHERE chat_id = ? 
+            GROUP BY user_id 
+            ORDER BY msg_count DESC 
+            LIMIT 5
+        ''', (chat_id,))
+        top_users = cursor.fetchall()
+        
+        # Admin actions count
+        cursor.execute('SELECT COUNT(*) FROM admin_actions WHERE chat_id = ?', (chat_id,))
+        admin_actions = cursor.fetchone()[0]
+        
+        # Total warns
+        cursor.execute('SELECT COUNT(*) FROM warns WHERE chat_id = ?', (chat_id,))
+        total_warns = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        # Build stats message
+        msg = f"📊 **Group Statistics**\n\n"
+        msg += f"**Group:** {chat.title}\n"
+        msg += f"**Members:** {member_count}\n"
+        msg += f"**Admins:** {admin_count}\n\n"
+        
+        msg += f"**Activity:**\n"
+        msg += f"• Messages logged: {total_messages}\n"
+        msg += f"• Unique chatters: {unique_users}\n"
+        msg += f"• Admin actions: {admin_actions}\n"
+        msg += f"• Total warnings: {total_warns}\n\n"
+        
+        if top_users:
+            msg += f"**🏆 Top Chatters:**\n"
+            for i, (user_id, msg_count) in enumerate(top_users, 1):
+                try:
+                    user = await context.bot.get_chat_member(chat_id, user_id)
+                    name = user.user.first_name
+                except:
+                    name = f"User {user_id}"
+                msg += f"{i}. {name}: {msg_count} messages\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    
+    except Exception as e:
+        await update.message.reply_text(f"Failed to get stats: {e}")
+
+async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Report a message to admins"""
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Reply to a message to report it! 🚨")
+        return
+    
+    chat_id = update.effective_chat.id
+    reporter = update.effective_user
+    reported_message = update.message.reply_to_message
+    reported_user = reported_message.from_user
+    
+    # Don't allow reporting admins
+    if await is_target_admin(update, context, reported_user.id):
+        await update.message.reply_text("You can't report an admin, silly! 🥺")
+        return
+    
+    # Get reason (optional)
+    reason = " ".join(context.args) if context.args else "No reason provided"
+    
+    # Notify admins
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        
+        report_msg = (
+            f"🚨 **NEW REPORT** 🚨\n\n"
+            f"**Reported by:** {reporter.first_name} (@{reporter.username or 'no username'})\n"
+            f"**Reported user:** {reported_user.first_name} (@{reported_user.username or 'no username'})\n"
+            f"**Reason:** {reason}\n\n"
+            f"_Message: \"{reported_message.text[:100] if reported_message.text else '[Media]'}\"_"
+        )
+        
+        # Send to all admins via DM (if bot can)
+        admin_count = 0
+        for admin in admins:
+            if admin.user.is_bot:
+                continue
+            try:
+                await context.bot.send_message(admin.user.id, report_msg, parse_mode='Markdown')
+                admin_count += 1
+            except:
+                # Admin hasn't started bot or blocked it
+                pass
+        
+        # Also send in group (tagged to admins)
+        await update.message.reply_text(
+            f"✅ **Report submitted!**\n"
+            f"Admins have been notified ({admin_count} reached via DM).\n"
+            f"Thank you for keeping the group safe~ 💕"
+        )
+        
+        db.log_admin_action(chat_id, reporter.id, "report", reported_user.id, reason[:100])
+        
+        # Delete the report command for privacy
+        try:
+            await update.message.delete()
+        except:
+            pass
+    
+    except Exception as e:
+        await update.message.reply_text(f"Failed to submit report: {e}")
+
+async def antiflood_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Configure anti-flood protection"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can configure anti-flood, cutie! 🥺")
+        return
+    
+    chat_id = update.effective_chat.id
+    
+    if not context.args:
+        # Show current settings
+        settings = db.get_mod_settings(chat_id)
+        enabled = settings.get('antiflood_enabled', 1)
+        threshold = settings.get('antiflood_threshold', 5)
+        timeframe = settings.get('antiflood_timeframe', 5)
+        action = settings.get('antiflood_action', 'mute')
+        
+        status = "✅ Enabled" if enabled else "❌ Disabled"
+        
+        msg = f"🌊 **Anti-Flood Settings**\n\n"
+        msg += f"**Status:** {status}\n"
+        msg += f"**Threshold:** {threshold} messages\n"
+        msg += f"**Timeframe:** {timeframe} seconds\n"
+        msg += f"**Action:** {action.upper()}\n\n"
+        msg += f"**Usage:**\n"
+        msg += f"• `!antiflood on` - Enable anti-flood\n"
+        msg += f"• `!antiflood off` - Disable anti-flood\n"
+        msg += f"• `!antiflood set <msgs> <secs> <action>` - Configure\n"
+        msg += f"  Example: `!antiflood set 7 10 warn`\n\n"
+        msg += f"**Actions:** warn, mute, kick, ban"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        return
+    
+    arg = context.args[0].lower()
+    
+    if arg == "on":
+        if db.set_antiflood(chat_id, enabled=True):
+            await update.message.reply_text("✅ **Anti-flood protection enabled!**\nSpammers will be dealt with~ 🌊")
+            db.log_admin_action(chat_id, update.effective_user.id, "antiflood", reason="enabled")
+        else:
+            await update.message.reply_text("Failed to enable anti-flood! 😢")
+    
+    elif arg == "off":
+        if db.set_antiflood(chat_id, enabled=False):
+            await update.message.reply_text("❌ **Anti-flood protection disabled!**\nBe careful with spammers~ 🥺")
+            db.log_admin_action(chat_id, update.effective_user.id, "antiflood", reason="disabled")
+        else:
+            await update.message.reply_text("Failed to disable anti-flood! 😢")
+    
+    elif arg == "set":
+        if len(context.args) < 4:
+            await update.message.reply_text("Usage: `!antiflood set <messages> <seconds> <action>`\nExample: `!antiflood set 7 10 mute`", parse_mode='Markdown')
+            return
+        
+        try:
+            threshold = int(context.args[1])
+            timeframe = int(context.args[2])
+            action = context.args[3].lower()
+            
+            if threshold < 3 or threshold > 50:
+                await update.message.reply_text("Threshold must be between 3 and 50 messages! 🥺")
+                return
+            
+            if timeframe < 3 or timeframe > 60:
+                await update.message.reply_text("Timeframe must be between 3 and 60 seconds! 🥺")
+                return
+            
+            if action not in ['warn', 'mute', 'kick', 'ban']:
+                await update.message.reply_text("Action must be: warn, mute, kick, or ban! 🥺")
+                return
+            
+            if db.set_antiflood(chat_id, enabled=True, threshold=threshold, timeframe=timeframe, action=action):
+                await update.message.reply_text(
+                    f"✅ **Anti-flood configured!**\n\n"
+                    f"**Threshold:** {threshold} messages in {timeframe} seconds\n"
+                    f"**Action:** {action.upper()}\n\n"
+                    f"Spammers beware! 🌊💪"
+                )
+                db.log_admin_action(chat_id, update.effective_user.id, "antiflood", reason=f"set:{threshold}/{timeframe}/{action}")
+            else:
+                await update.message.reply_text("Failed to configure anti-flood! 😢")
+        
+        except ValueError:
+            await update.message.reply_text("Invalid numbers! Use: `!antiflood set <messages> <seconds> <action>`", parse_mode='Markdown')
+    
+    else:
+        await update.message.reply_text("Invalid option! Use: `on`, `off`, or `set` 🥺")
+
+async def setwarnaction_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set what happens when a user reaches the warn limit"""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can configure warn actions, cutie! 🥺")
+        return
+    
+    chat_id = update.effective_chat.id
+    
+    if not context.args:
+        # Show current settings
+        settings = db.get_mod_settings(chat_id)
+        action = settings.get('warn_action', 'ban')
+        duration = settings.get('warn_action_duration', 0)
+        
+        msg = f"⚙️ **Current Warn Action Settings**\n\n"
+        msg += f"**Warn Limit:** {settings['warn_limit']} warnings\n"
+        msg += f"**Action:** {action.upper()}\n"
+        if action == 'mute' and duration > 0:
+            msg += f"**Duration:** {duration} minutes\n"
+        
+        msg += f"\n**Available Actions:**\n"
+        msg += f"• `!setwarnaction ban` - Ban user permanently\n"
+        msg += f"• `!setwarnaction kick` - Kick user (can rejoin)\n"
+        msg += f"• `!setwarnaction mute <minutes>` - Mute for X minutes\n"
+        msg += f"• `!setwarnaction none` - Just count warns, no action\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        return
+    
+    action = context.args[0].lower()
+    duration = 0
+    
+    # Validate action
+    if action not in ['ban', 'kick', 'mute', 'none']:
+        await update.message.reply_text(f"Invalid action! Use: `ban`, `kick`, `mute`, or `none` 🥺", parse_mode='Markdown')
+        return
+    
+    # Parse duration for mute
+    if action == 'mute':
+        if len(context.args) < 2:
+            await update.message.reply_text("Please specify mute duration! Example: `!setwarnaction mute 60` (60 minutes)", parse_mode='Markdown')
+            return
+        try:
+            duration = int(context.args[1])
+            if duration <= 0 or duration > 43200:  # Max 30 days in minutes
+                await update.message.reply_text("Mute duration must be between 1 and 43200 minutes (30 days)! 🥺")
+                return
+        except ValueError:
+            await update.message.reply_text("Invalid duration! Please use a number (in minutes) 🥺")
+            return
+    
+    # Save settings
+    if db.set_warn_action(chat_id, action, duration):
+        if action == 'ban':
+            await update.message.reply_text("✅ **Warn action set to BAN!**\nUsers reaching the warn limit will be permanently banned. 🔨")
+        elif action == 'kick':
+            await update.message.reply_text("✅ **Warn action set to KICK!**\nUsers reaching the warn limit will be kicked (but can rejoin). 👟")
+        elif action == 'mute':
+            await update.message.reply_text(f"✅ **Warn action set to MUTE!**\nUsers reaching the warn limit will be muted for {duration} minutes. 🤐")
+        elif action == 'none':
+            await update.message.reply_text("✅ **Warn action set to NONE!**\nWarnings will be counted but no automatic action will be taken. ⚠️")
+        
+        db.log_admin_action(chat_id, update.effective_user.id, "setwarnaction", reason=f"{action}:{duration}")
+    else:
+        await update.message.reply_text("Failed to save warn action settings! 😢")
+
 async def cleanup_job(context: ContextTypes.DEFAULT_TYPE):
     """Periodic job to delete old messages based on retention settings"""
     # This is a bit complex since retention is per-chat. 
@@ -1268,42 +2002,6 @@ async def cleanup_job(context: ContextTypes.DEFAULT_TYPE):
     # Let's assume a global cleanup for now or add a helper.
     db.delete_old_messages(30) # Default 30 days for now
     logging.info("🧹 Periodic log cleanup completed.")
-
-async def mhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Moderation Help"""
-    if not await is_admin(update, context):
-        await update.message.reply_text("This is for admins only, cutie! 🥺")
-        return
-
-    mhelp_text = """
-🛡️ **Iris Moderation Help** 🛡️
-
-**Admin Commands:**
-- `!warn <p>` - Warn user (Presets: `s`, `a`, `n`, `u`)
-- `!mute <time>` - Mute user (e.g. `!mute 10m`, `!mute 1h`)
-- `!unmute` - Unmute user
-- `!unban <id>` - Unban user (needs ID)
-- `!ban` - Ban user
-- `!kick` - Kick user
-- `!purge` - Delete messages (reply to start)
-- `!filter` - Block keyword/regex/script (e.g. `!filter badword`, `!filter script:arabic`)
-- `!stats` - Admin action summary
-- `!admincheck` - Group health & admin activity
-- `!lock <time>` - Disable chat (e.g. `!lock duration:10m`)
-- `!privacy` - Toggle log masking
-- `!retention` - Set log auto-delete days
-- `!export` / `!import` - Backup/Restore settings
-
-**Advanced Features:**
-- **Smart Filters**: Ignores code blocks and quotes.
-- **Auto-Mod Edits**: Re-scans messages when they are edited.
-- **Spam Control**: Detects excessive caps, emojis, and flood.
-- **Abuse Protection**: 1.5s command cooldown for all users.
-- **Link Filter**: Smart domain checks (t.me, bit.ly, etc).
-
-Keep the chat safe and sweet! 💖✨
-"""
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=mhelp_text, parse_mode='Markdown')
 
 async def pp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """The classic pp size command"""
@@ -1712,6 +2410,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.username:
             db.update_user_record(chat_id, user_id, update.effective_user.username)
 
+    # Anti-flood detection (groups only, skip admins)
+    if chat_type != "private" and update.effective_user and not await is_admin(update, context):
+        settings = db.get_mod_settings(chat_id)
+        if settings.get('antiflood_enabled', 1):
+            current_time = time.time()
+            threshold = settings.get('antiflood_threshold', 5)
+            timeframe = settings.get('antiflood_timeframe', 5)
+            action = settings.get('antiflood_action', 'mute')
+            
+            # Track message timestamp
+            user_messages = flood_tracker[chat_id][user_id]
+            user_messages.append(current_time)
+            
+            # Clean old timestamps
+            user_messages[:] = [ts for ts in user_messages if current_time - ts <= timeframe]
+            
+            # Check threshold
+            if len(user_messages) >= threshold:
+                flood_tracker[chat_id][user_id].clear()
+                
+                try:
+                    if action == 'warn':
+                        count = db.add_warn(chat_id, user_id, "Flooding/Spam", update.effective_user.username)
+                        await update.message.reply_text(f"⚠️ **{user_name}** slow down! **Warning {count}/3**")
+                    elif action == 'mute':
+                        until = datetime.now() + timedelta(minutes=10)
+                        await context.bot.restrict_chat_member(chat_id, user_id, ChatPermissions(can_send_messages=False), until_date=until)
+                        await update.message.reply_text(f"🤐 **{user_name}** muted for 10 minutes for flooding! 🌊")
+                    elif action == 'kick':
+                        await context.bot.unban_chat_member(chat_id, user_id)
+                        await update.message.reply_text(f"👟 **{user_name}** kicked for flooding! 🌊")
+                    elif action == 'ban':
+                        await context.bot.ban_chat_member(chat_id, user_id)
+                        await update.message.reply_text(f"🔨 **{user_name}** banned for severe flooding! 🌊")
+                except Exception as e:
+                    logging.error(f"Antiflood action failed: {e}")
+                return
+
     # 1. Bot Account Detection (New)
     if update.effective_user and update.effective_user.is_bot and update.effective_user.id != context.bot.id:
         if chat_type != "private":
@@ -1950,69 +2686,199 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User help - General commands for everyone"""
     help_text = """
 ✨ **Iris - Your Cute AI Friend!** ✨
 
 Hii~ here's everything I can do! 💖
 
-🤖 **Chatting**
-- Mention `Iris` or reply to me to chat!
+🤖 **Chatting with Me**
+- Mention `@Iris` or reply to my messages to chat!
 - In DMs, I'm always listening~ 💕
+- Use `!reset` to clear conversation memory
+- Use `!roleplay <scenario>` to make me act as any character!
+- Use `!normal` to return me to my cute self~
 
 🎉 **Fun Commands**
 - `!meme` - Random meme from Reddit
-- `!roast` - Playful roast~ 🔥
-- `!ship` - Ship two people together 💘
-- `!8ball <question>` - Magic 8-ball 🎱
-- `!uwu` - UwUify any text~
-- `!rate <thing>` - Rate stuff out of 10
-- `!vibe` - Vibe check someone ✨
-- `!pp` - The classic 📏
-- `!howgay` - The meter 🏳️‍🌈
-- `!simprate` - Simp detector 🚨
+- `!roast [@user]` - Playful roast~ 🔥
+- `!ship [@user1] [@user2]` - Ship two people 💘
+- `!8ball <question>` - Magic 8-ball answers 🎱
+- `!uwu <text>` - UwUify any text~
+- `!rate <thing>` - Rate anything out of 10
+- `!vibe [@user]` - Vibe check someone ✨
+- `!pp [@user]` - The classic measurement 📏
+- `!howgay [@user]` - Gay meter 🏳️‍🌈
+- `!simprate [@user]` - Simp detector 🚨
 
-💰 **Economy**
-- `!balance` - Check your wallet 🌸
-- `!beg` - Beg for coins~
-- `!daily` - Daily reward!
+💰 **Economy System**
+- `!balance` / `!bal` - Check your wallet 🌸
+- `!beg` - Beg for coins (sometimes works!)
+- `!daily` - Claim daily reward!
 - `!gamble <amount>` - Double or nothing 🎰
-- `!pay <amount>` - Pay a friend
-- `!rich` - Leaderboard 👑
+- `!pay <@user> <amount>` - Send coins to friends
+- `!rich` / `!leaderboard` - Top richest users 👑
 
-🛡️ **Moderation** (Admins Only)
-- `!mhelp` - Show detailed moderation help 🛡️
-- `!stats` - Admin action summary 📊
-- `!admincheck` - Check for inactive admins 🏥
-- `!filter` - Block keywords/regex 🚫
-- `!lock` / `!unlock` - Close/Open chat 🔒
-- `!privacy` - Mask names in logs 🔒
-- `!retention <days>` - Auto-delete old logs 🧹
-- `!export` / `!import` - Backup/Restore settings 📦
-- `!warn` - Warn a user ⚠️
-- `!mute <mins>` - Mute for X mins (default 60) 🤐
-- `!unmute` - Unmute someone ✨
-- `!unban <id>` - Unban user (needs ID) 🔓
-- `!ban` - Ban from the group 🔨
-- `!kick` - Kick from the group 👟
-- `!purge` - Delete messages (reply to start) 🧹
+🎭 **Roleplay Mode**
+- `!roleplay <scenario>` - Transform into any character!
+  Examples:
+  • `!roleplay You are a cat`
+  • `!roleplay Act as a pirate captain`
+  • `!roleplay You're a tsundere anime girl`
+- `!normal` - Return to normal Iris personality
 
-🎭 **Roleplay**
-- `!roleplay <scenario>` - I become any character!
-- `!normal` - Back to being me~
+🎲 **Mini Games**
+- `!truth` - Get a truth question 👀
+- `!dare` - Get a dare challenge 🔥
+- `!trivia` - Test your knowledge 🧠
 
-🎲 **Games**
-- `!truth` - Truth question 👀
-- `!dare` - Dare you~ 🔥
-- `!trivia` - Test your brain 🧠
+⚙️ **Utilities**
+- `!help` - Show this message
+- `!donate` - Support the server 🥺💖
+- `!qr <text>` - Generate QR code
+- `!rules` - View group rules 📜
+- `!note <name>` - View saved notes 📝
+- `!notes` - List all available notes
+- `!groupstats` - Group statistics 📊
+- `!report [reason]` - Report a message to admins 🚨
 
-⚙️ **Utils**
-- `!reset` - Wipe my memory
-- `!donate` - Support my server 🥺
-- `!help` - This message
+🛡️ **For Admins**
+Type `!mhelp` to see all moderation commands!
 
-Have fun~ 🌸💖
+Have fun chatting with me~ 🌸💖
 """
     await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
+
+async def mhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Moderation help - Admin commands only"""
+    # Show full help for admins, basic info for users
+    is_user_admin = await is_admin(update, context)
+    
+    if not is_user_admin:
+        await update.message.reply_text(
+            "🛡️ **Moderation Commands** 🛡️\n\n"
+            "These commands are for admins only!\n"
+            "If you're an admin, you'll see the full list when you use this command~ 💕"
+        )
+        return
+    
+    help_text = """
+🛡️ **Iris Moderation Guide** 🛡️
+
+**USER MANAGEMENT**
+━━━━━━━━━━━━━━━━━
+⚠️ `!warn [@user] [reason]` - Warn a user
+   • Reason shortcuts: s (spam), a (ads), n (nsfw), u (unkind), r (raid)
+   • Example: `!warn @user s` or `!warn @user Flooding chat`
+
+🤐 `!mute [@user] [duration]` - Mute a user
+   • Duration: 10m, 1h, 2d (default: 1h)
+   • Example: `!mute @user 30m`
+
+✨ `!unmute [@user]` - Unmute a user
+
+🔨 `!ban [@user]` - Permanently ban a user
+
+👟 `!kick [@user]` - Kick user (can rejoin)
+
+🔓 `!unban [@user or ID]` - Unban a user
+   • Can use username or user ID
+
+🧹 `!purge` - Delete messages (reply to start message)
+
+**WARN SYSTEM CONFIG**
+━━━━━━━━━━━━━━━━━
+⚙️ `!setwarnaction [action]` - Configure warn limit action
+   • `!setwarnaction` - View current settings
+   • `!setwarnaction ban` - Ban on warn limit
+   • `!setwarnaction kick` - Kick on warn limit
+   • `!setwarnaction mute 60` - Mute for 60 mins
+   • `!setwarnaction none` - Just count, no action
+
+**CHAT CONTROLS**
+━━━━━━━━━━━━━━━━━
+🔒 `!lock [duration:Xm/h/d]` - Lock chat (admins only speak)
+   • Example: `!lock duration:30m`
+
+🔓 `!unlock` - Unlock chat
+
+🚫 `!filter <add/remove/list> [word]` - Word filter
+   • `!filter add badword` - Block a word
+   • `!filter remove badword` - Unblock
+   • `!filter list` - Show blocked words
+
+**ADMIN TOOLS**
+━━━━━━━━━━━━━━━━━
+📊 `!stats` - View admin action summary
+
+🏥 `!admincheck` - Check inactive admins
+
+📌 `!pin [silent]` - Pin a message (reply to it)
+
+📌 `!unpin [all]` - Unpin message or all pins
+
+👑 `!promote [@user] [title]` - Promote to admin
+
+👤 `!demote [@user]` - Demote admin
+
+📢 `!announce <message>` - Send announcement
+
+📊 `!groupstats` - Group statistics & insights
+
+🔒 `!privacy <on/off>` - Mask usernames in logs
+
+🧹 `!retention <days>` - Auto-delete old logs
+
+📦 `!export` / `!import` - Backup/Restore settings
+
+**RULES & NOTES**
+━━━━━━━━━━━━━━━━━
+📜 `!rules` - View group rules
+
+📜 `!setrules <text>` - Set group rules (admin)
+
+📝 `!note <name>` - View a saved note
+
+📝 `!notes` - List all notes
+
+📝 `!savenote <name> <content>` - Save note (admin)
+
+🗑️ `!delnote <name>` - Delete note (admin)
+
+**ANTI-FLOOD**
+━━━━━━━━━━━━━━━━━
+🌊 `!antiflood` - View/configure flood protection
+   • `!antiflood on/off` - Enable/disable
+   • `!antiflood set <msgs> <secs> <action>` - Configure
+   • Actions: warn, mute, kick, ban
+
+**TIPS & BEST PRACTICES**
+━━━━━━━━━━━━━━━━━
+✅ Always set warn action: `!setwarnaction ban` or `mute 120`
+✅ Use word filters for common spam/abuse
+✅ Check admin activity weekly with `!admincheck`
+✅ Export settings regularly as backup
+✅ Set retention to manage database size
+
+Need help? Tag an owner or check `!help` for user commands! 💕
+"""
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
+
+async def init_telethon():
+    """Initialize Telethon client for username lookups"""
+    global telethon_client
+    
+    if TELEGRAM_API_ID and TELEGRAM_API_HASH:
+        try:
+            telethon_client = TelegramClient('iris_session', int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+            await telethon_client.start()
+            print("✅ Telethon client initialized for advanced username lookups!")
+        except Exception as e:
+            logging.warning(f"⚠️ Telethon initialization failed: {e}")
+            logging.warning("Username lookups will fall back to bot API only.")
+            telethon_client = None
+    else:
+        logging.info("ℹ️ Telethon credentials not provided. Username lookups will use bot API only.")
 
 if __name__ == '__main__':
     # Initialize Database
@@ -2022,6 +2888,9 @@ if __name__ == '__main__':
         print("Error: TELEGRAM_BOT_TOKEN not found in .env file.")
         print("Please copy .env.example to .env and fill in your tokens.")
     else:
+        # Initialize Telethon for username lookups
+        asyncio.get_event_loop().run_until_complete(init_telethon())
+        
         # Increase connection timeouts to handle slow networks/server lag
         request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
         application = ApplicationBuilder().token(TELEGRAM_TOKEN).request(request).build()
@@ -2078,6 +2947,21 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('import', import_command))
         application.add_handler(CommandHandler('retention', retention_command))
         application.add_handler(CommandHandler('admincheck', admincheck_command))
+        application.add_handler(CommandHandler('setwarnaction', setwarnaction_command))
+        application.add_handler(CommandHandler('antiflood', antiflood_command))
+        application.add_handler(CommandHandler('pin', pin_command))
+        application.add_handler(CommandHandler('unpin', unpin_command))
+        application.add_handler(CommandHandler('promote', promote_command))
+        application.add_handler(CommandHandler('demote', demote_command))
+        application.add_handler(CommandHandler('announce', announce_command))
+        application.add_handler(CommandHandler('report', report_command))
+        application.add_handler(CommandHandler('rules', rules_command))
+        application.add_handler(CommandHandler('setrules', setrules_command))
+        application.add_handler(CommandHandler('note', note_command))
+        application.add_handler(CommandHandler('notes', notes_command))
+        application.add_handler(CommandHandler('savenote', savenote_command))
+        application.add_handler(CommandHandler('delnote', delnote_command))
+        application.add_handler(CommandHandler('groupstats', groupstats_command))
 
         # Schedule periodic cleanup (every 24 hours) if JobQueue is available
         if application.job_queue:

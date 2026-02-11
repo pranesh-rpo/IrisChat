@@ -102,7 +102,58 @@ def init_db():
                 chat_id INTEGER PRIMARY KEY,
                 auto_mod BOOLEAN DEFAULT 1,
                 warn_limit INTEGER DEFAULT 3,
-                ban_on_limit BOOLEAN DEFAULT 1
+                ban_on_limit BOOLEAN DEFAULT 1,
+                warn_action TEXT DEFAULT 'ban',
+                warn_action_duration INTEGER DEFAULT 0,
+                antiflood_enabled BOOLEAN DEFAULT 1,
+                antiflood_threshold INTEGER DEFAULT 5,
+                antiflood_timeframe INTEGER DEFAULT 5,
+                antiflood_action TEXT DEFAULT 'mute'
+            )
+        ''')
+        
+        # Migration: Add warn_action and warn_action_duration if they don't exist
+        try:
+            cursor.execute('ALTER TABLE mod_settings ADD COLUMN warn_action TEXT DEFAULT "ban"')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE mod_settings ADD COLUMN warn_action_duration INTEGER DEFAULT 0')
+        except sqlite3.OperationalError:
+            pass
+        
+        # Migration: Add antiflood settings
+        try:
+            cursor.execute('ALTER TABLE mod_settings ADD COLUMN antiflood_enabled BOOLEAN DEFAULT 1')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE mod_settings ADD COLUMN antiflood_threshold INTEGER DEFAULT 5')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE mod_settings ADD COLUMN antiflood_timeframe INTEGER DEFAULT 5')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE mod_settings ADD COLUMN antiflood_action TEXT DEFAULT "mute"')
+        except sqlite3.OperationalError:
+            pass
+
+        # Create notes/rules table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                note_name TEXT NOT NULL,
+                note_content TEXT NOT NULL,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(chat_id, note_name)
             )
         ''')
 
@@ -324,7 +375,7 @@ def is_muted(chat_id, user_id):
         logging.error(f"Error checking mute: {e}")
         return False
 
-def get_user_id_by_username(username):
+def get_user_id_by_username(username, chat_id=None):
     """Get a user's ID from their username (looks in users and moderation)."""
     if not username: return None
     username = username.lstrip('@').lower()
@@ -333,19 +384,20 @@ def get_user_id_by_username(username):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        # 1. Check users table
+        # 1. Check users table (global lookup)
         cursor.execute('SELECT user_id FROM users WHERE LOWER(username) = ?', (username,))
         result = cursor.fetchone()
         if result:
             conn.close()
             return result[0]
             
-        # 2. Check moderation table (legacy/backup)
-        cursor.execute('SELECT user_id FROM moderation WHERE LOWER(username) = ?', (username,))
-        result = cursor.fetchone()
-        if result:
-            conn.close()
-            return result[0]
+        # 2. Check moderation table (chat-specific lookup if chat_id provided)
+        if chat_id:
+            cursor.execute('SELECT user_id FROM moderation WHERE chat_id = ? AND LOWER(username) = ?', (chat_id, username))
+            result = cursor.fetchone()
+            if result:
+                conn.close()
+                return result[0]
             
         conn.close()
         return None
@@ -393,15 +445,137 @@ def get_mod_settings(chat_id):
         conn = sqlite3.connect(DB_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute('SELECT auto_mod, warn_limit, ban_on_limit FROM mod_settings WHERE chat_id = ?', (chat_id,))
+        cursor.execute('SELECT * FROM mod_settings WHERE chat_id = ?', (chat_id,))
         row = cursor.fetchone()
         conn.close()
         if row:
             return dict(row)
-        return {"auto_mod": 1, "warn_limit": 3, "ban_on_limit": 1}
+        return {
+            "auto_mod": 1, 
+            "warn_limit": 3, 
+            "ban_on_limit": 1, 
+            "warn_action": "ban", 
+            "warn_action_duration": 0,
+            "antiflood_enabled": 1,
+            "antiflood_threshold": 5,
+            "antiflood_timeframe": 5,
+            "antiflood_action": "mute"
+        }
     except Exception as e:
         logging.error(f"Error getting mod settings: {e}")
-        return {"auto_mod": 1, "warn_limit": 3, "ban_on_limit": 1}
+        return {
+            "auto_mod": 1, 
+            "warn_limit": 3, 
+            "ban_on_limit": 1, 
+            "warn_action": "ban", 
+            "warn_action_duration": 0,
+            "antiflood_enabled": 1,
+            "antiflood_threshold": 5,
+            "antiflood_timeframe": 5,
+            "antiflood_action": "mute"
+        }
+
+def save_note(chat_id, note_name, note_content, created_by):
+    """Save or update a note/rule"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO notes (chat_id, note_name, note_content, created_by)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id, note_name) DO UPDATE SET
+                note_content = excluded.note_content,
+                created_by = excluded.created_by,
+                created_at = CURRENT_TIMESTAMP
+        ''', (chat_id, note_name.lower(), note_content, created_by))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error saving note: {e}")
+        return False
+
+def get_note(chat_id, note_name):
+    """Get a specific note"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT note_content FROM notes WHERE chat_id = ? AND LOWER(note_name) = ?', 
+                      (chat_id, note_name.lower()))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        logging.error(f"Error getting note: {e}")
+        return None
+
+def get_all_notes(chat_id):
+    """Get all notes for a chat"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT note_name, note_content FROM notes WHERE chat_id = ? ORDER BY note_name', (chat_id,))
+        notes = cursor.fetchall()
+        conn.close()
+        return notes
+    except Exception as e:
+        logging.error(f"Error getting notes: {e}")
+        return []
+
+def delete_note(chat_id, note_name):
+    """Delete a note"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM notes WHERE chat_id = ? AND LOWER(note_name) = ?', 
+                      (chat_id, note_name.lower()))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        logging.error(f"Error deleting note: {e}")
+        return False
+
+def set_antiflood(chat_id, enabled=True, threshold=5, timeframe=5, action="mute"):
+    """Configure anti-flood settings for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO mod_settings (chat_id, antiflood_enabled, antiflood_threshold, antiflood_timeframe, antiflood_action)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                antiflood_enabled = excluded.antiflood_enabled,
+                antiflood_threshold = excluded.antiflood_threshold,
+                antiflood_timeframe = excluded.antiflood_timeframe,
+                antiflood_action = excluded.antiflood_action
+        ''', (chat_id, enabled, threshold, timeframe, action))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error setting antiflood: {e}")
+        return False
+
+def set_warn_action(chat_id, action, duration=0):
+    """Set the warn action for a chat. Actions: ban, kick, mute"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO mod_settings (chat_id, warn_action, warn_action_duration)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                warn_action = excluded.warn_action,
+                warn_action_duration = excluded.warn_action_duration
+        ''', (chat_id, action, duration))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error setting warn action: {e}")
+        return False
 
 # --- Filter & Health Functions ---
 
