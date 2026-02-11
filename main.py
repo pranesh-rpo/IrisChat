@@ -611,53 +611,61 @@ async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if entity.type == "text_mention":
                 return entity.user
 
-    # 3. Resolve @username directly using Telegram's API
-    if context.args:
-        mention = context.args[0]
-        if mention.startswith("@"):
-            username = mention # Keep the @ for get_chat
+    # 3. Resolve @username
+    # We'll check all arguments for something starting with @
+    target_username = None
+    for arg in context.args:
+        if arg.startswith("@"):
+            target_username = arg
+            break
             
-            try:
-                # This is the "magic" way to find a user by username without a database!
-                # It works for any user with a public username.
-                target_chat = await context.bot.get_chat(username)
-                
-                # If successful, target_chat will be a Chat object representing the user
-                # We can mock a User object from it for our commands
+    if target_username:
+        try:
+            logging.info(f"Attempting to resolve target: {target_username}")
+            # Try to get the user directly via API
+            # Note: get_chat works for public usernames
+            target_chat = await context.bot.get_chat(target_username)
+            
+            # If we found a chat that is a private chat (a user), return it
+            if target_chat.type == "private":
                 class MockUser:
                     def __init__(self, chat):
                         self.id = chat.id
                         self.username = chat.username
-                        self.first_name = chat.first_name or chat.username or "Unknown"
-                        self.is_bot = False # We don't strictly know, but usually safe to assume
+                        self.first_name = chat.first_name or chat.username or "User"
+                        self.is_bot = False 
                 
                 user = MockUser(target_chat)
-                # Still track it in DB so we have it for later/unban
                 db.track_user(user.id, user.username, user.first_name)
                 return user
-            except Exception as e:
-                logging.debug(f"Direct API resolution failed for {username}: {e}")
-                
-                # Fallback: Check our local "phonebook" database if the API failed
-                # (API might fail if the user is private or hasn't interacted with bots)
-                clean_username = username.lstrip("@").lower()
-                user_id = db.get_user_id_by_username(clean_username)
-                if user_id:
-                    try:
-                        chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
-                        return chat_member.user
-                    except:
-                        pass
-                
-                # Second Fallback: Check admins list
+        except Exception as e:
+            logging.warning(f"Direct API resolution failed for {target_username}: {e}")
+            
+            # Fallback A: Check database
+            clean_username = target_username.lstrip("@").lower()
+            user_id = db.get_user_id_by_username(clean_username)
+            if user_id:
                 try:
-                    admins = await context.bot.get_chat_administrators(update.effective_chat.id)
-                    for admin in admins:
-                        if admin.user.username and admin.user.username.lower() == clean_username:
-                            db.track_user(admin.user.id, admin.user.username, admin.user.first_name)
-                            return admin.user
+                    chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
+                    return chat_member.user
                 except:
-                    pass
+                    # If they are not in the chat, we can still return a mock user if we have an ID
+                    class MockUser:
+                        def __init__(self, uid, uname):
+                            self.id = uid
+                            self.username = uname
+                            self.first_name = uname or "User"
+                    return MockUser(user_id, clean_username)
+            
+            # Fallback B: Check admins
+            try:
+                admins = await context.bot.get_chat_administrators(update.effective_chat.id)
+                for admin in admins:
+                    if admin.user.username and admin.user.username.lower() == clean_username:
+                        db.track_user(admin.user.id, admin.user.username, admin.user.first_name)
+                        return admin.user
+            except:
+                pass
                 
     return None
 
