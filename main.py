@@ -600,7 +600,7 @@ async def is_target_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         return False
 
 async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Get the target user from reply or @username mention"""
+    """Get the target user from reply or @username mention or plain username"""
     # 1. Check reply
     if update.message.reply_to_message:
         return update.message.reply_to_message.from_user
@@ -611,20 +611,26 @@ async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if entity.type == "text_mention":
                 return entity.user
 
-    # 3. Resolve @username
-    # We'll check all arguments for something starting with @
+    # 3. Resolve username (with or without @)
+    # We'll check all arguments for something that could be a username
     target_username = None
-    for arg in context.args:
-        if arg.startswith("@"):
-            target_username = arg
-            break
+    if context.args:
+        # First arg is likely the username
+        potential_username = context.args[0]
+        # Accept both @username and username formats
+        if potential_username.startswith("@") or not potential_username.isdigit():
+            target_username = potential_username
             
     if target_username:
+        # Clean the username (remove @ if present)
+        clean_username = target_username.lstrip("@").lower()
+        
         try:
             logging.info(f"Attempting to resolve target: {target_username}")
-            # Try to get the user directly via API
+            # Try to get the user directly via API (requires @ prefix)
             # Note: get_chat works for public usernames
-            target_chat = await context.bot.get_chat(target_username)
+            api_username = f"@{clean_username}" if not target_username.startswith("@") else target_username
+            target_chat = await context.bot.get_chat(api_username)
             
             # If we found a chat that is a private chat (a user), return it
             if target_chat.type == "private":
@@ -642,7 +648,6 @@ async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.warning(f"Direct API resolution failed for {target_username}: {e}")
             
             # Fallback A: Check database
-            clean_username = target_username.lstrip("@").lower()
             user_id = db.get_user_id_by_username(clean_username)
             if user_id:
                 try:
@@ -654,10 +659,10 @@ async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         def __init__(self, uid, uname):
                             self.id = uid
                             self.username = uname
-                            self.first_name = uname or "User"
+                            self.first_name = uname.capitalize() or "User"
                     return MockUser(user_id, clean_username)
             
-            # Fallback B: Check admins
+            # Fallback B: Check chat members list
             try:
                 admins = await context.bot.get_chat_administrators(update.effective_chat.id)
                 for admin in admins:
@@ -698,8 +703,9 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Handle reason from args
     args_for_reason = list(context.args)
-    if args_for_reason and args_for_reason[0].startswith("@"):
-        args_for_reason.pop(0) # Remove username from reason parsing
+    if args_for_reason and (args_for_reason[0].startswith("@") or not args_for_reason[0].isdigit()):
+        # First arg is likely a username, skip it for reason parsing
+        args_for_reason.pop(0)
         
     if args_for_reason:
         arg = args_for_reason[0].lower()
@@ -752,7 +758,8 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Extract duration from args if present (skip first arg if it was a username)
     time_args = list(context.args)
-    if time_args and time_args[0].startswith("@"):
+    if time_args and (time_args[0].startswith("@") or not time_args[0].isdigit()):
+        # First arg is likely a username, skip it
         time_args.pop(0)
         
     if time_args:
