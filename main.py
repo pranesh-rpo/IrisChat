@@ -912,10 +912,12 @@ async def lock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         msg = "🔒 **Chat has been locked!** Only admins can speak now. 🤫"
         if duration_mins:
-            msg += f"\nAuto-unlocking in {duration_mins} minutes."
-            # Schedule auto-unlock
-            context.job_queue.run_once(auto_unlock_job, duration_mins * 60, chat_id=chat_id)
-            
+            if context.job_queue:
+                msg += f"\nAuto-unlocking in {duration_mins} minutes."
+                context.job_queue.run_once(auto_unlock_job, duration_mins * 60, chat_id=chat_id)
+            else:
+                msg += "\n⚠️ (Auto-unlock unavailable: JobQueue not configured)"
+        
         await update.message.reply_text(msg)
         db.log_admin_action(chat_id, update.effective_user.id, "lock", reason=f"{duration_mins}m" if duration_mins else "permanent")
     except Exception as e:
@@ -1941,8 +1943,11 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('retention', retention_command))
         application.add_handler(CommandHandler('admincheck', admincheck_command))
 
-        # Schedule periodic cleanup (every 24 hours)
-        application.job_queue.run_repeating(cleanup_job, interval=86400, first=10)
+        # Schedule periodic cleanup (every 24 hours) if JobQueue is available
+        if application.job_queue:
+            application.job_queue.run_repeating(cleanup_job, interval=86400, first=10)
+        else:
+            logging.warning("⚠️ JobQueue not available. Scheduled tasks (like log cleanup) will not run.")
 
         application.add_handler(start_handler)
         application.add_handler(msg_handler)
