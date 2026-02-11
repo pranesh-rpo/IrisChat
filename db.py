@@ -131,6 +131,20 @@ def init_db():
             )
         ''')
 
+        # Create users table for username lookup
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        try:
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_username ON users(username)')
+        except:
+            pass
+
         conn.commit()
         conn.close()
         logging.info("Database initialized successfully.")
@@ -311,25 +325,51 @@ def is_muted(chat_id, user_id):
         return False
 
 def get_user_id_by_username(username):
-    """Get a user's ID from their username (looks in moderation and messages)."""
+    """Get a user's ID from their username (looks in users and moderation)."""
+    if not username: return None
+    username = username.lstrip('@').lower()
+    
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        # Check moderation table first (most likely to have clean username data)
-        cursor.execute('SELECT user_id FROM moderation WHERE username = ? OR username = ?', (username, username.lower()))
+        # 1. Check users table
+        cursor.execute('SELECT user_id FROM users WHERE LOWER(username) = ?', (username,))
         result = cursor.fetchone()
         if result:
             conn.close()
             return result[0]
             
-        # Check messages table (where we store sender_name, but that's usually display name)
-        # We don't have a dedicated users table yet, so this is our best bet
+        # 2. Check moderation table (legacy/backup)
+        cursor.execute('SELECT user_id FROM moderation WHERE LOWER(username) = ?', (username,))
+        result = cursor.fetchone()
+        if result:
+            conn.close()
+            return result[0]
+            
         conn.close()
         return None
     except Exception as e:
         logging.error(f"Error getting user by username: {e}")
         return None
+
+def track_user(user_id, username=None, first_name=None):
+    """Update user info in the users table."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO users (user_id, username, first_name, last_seen)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = COALESCE(excluded.username, users.username),
+                first_name = COALESCE(excluded.first_name, users.first_name),
+                last_seen = CURRENT_TIMESTAMP
+        ''', (user_id, username, first_name))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error tracking user: {e}")
 
 def update_user_record(chat_id, user_id, username):
     """Update or create a user record in the moderation table to track username."""

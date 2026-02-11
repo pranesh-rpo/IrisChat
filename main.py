@@ -601,23 +601,42 @@ async def is_target_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, us
 
 async def get_target_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get the target user from reply or @username mention"""
+    # 1. Check reply
     if update.message.reply_to_message:
         return update.message.reply_to_message.from_user
     
+    # 2. Check entities (for text_mention or direct mentions)
+    if update.message.entities:
+        for entity in update.message.entities:
+            if entity.type == "text_mention":
+                return entity.user
+
+    # 3. Check context.args for @username
     if context.args:
         mention = context.args[0]
         if mention.startswith("@"):
-            username = mention[1:]
-            # We can't directly get User object from username easily without them having interacted with the bot
-            # But we can look in our message logs/database for this username
+            username = mention[1:].lower()
+            
+            # A. Check database first
             user_id = db.get_user_id_by_username(username)
             if user_id:
-                # Mock a user object or fetch from chat
                 try:
                     chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
                     return chat_member.user
                 except:
                     pass
+            
+            # B. Check admins list (often contains the target if it's a bot like MissRose)
+            try:
+                admins = await context.bot.get_chat_administrators(update.effective_chat.id)
+                for admin in admins:
+                    if admin.user.username and admin.user.username.lower() == username:
+                        # Store it while we're at it
+                        db.track_user(admin.user.id, admin.user.username, admin.user.first_name)
+                        return admin.user
+            except:
+                pass
+                
     return None
 
 async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1647,8 +1666,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_type = update.effective_chat.type
 
     # Track user record for username-based moderation
-    if update.effective_user and update.effective_user.username:
-        db.update_user_record(chat_id, user_id, update.effective_user.username)
+    if update.effective_user:
+        db.track_user(
+            update.effective_user.id, 
+            update.effective_user.username, 
+            update.effective_user.first_name
+        )
+        if update.effective_user.username:
+            db.update_user_record(chat_id, user_id, update.effective_user.username)
 
     # 1. Bot Account Detection (New)
     if update.effective_user and update.effective_user.is_bot and update.effective_user.id != context.bot.id:
