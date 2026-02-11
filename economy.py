@@ -6,8 +6,12 @@ CURRENCY_NAME = "IrisCoins"
 CURRENCY_SYMBOL = "🌸"
 
 async def balance(update, context):
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name
+    target_user = update.effective_user
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+        
+    user_id = target_user.id
+    user_name = target_user.first_name
     
     # Update name in DB
     db.update_user_name(user_id, user_name)
@@ -138,14 +142,14 @@ async def leaderboard(update, context):
 async def pay(update, context):
     sender_id = update.effective_user.id
     
-    if not context.args or len(context.args) < 2:
-         await context.bot.send_message(chat_id=update.effective_chat.id, text="💸 Usage: `!pay <amount> <reply_to_user>`", parse_mode='Markdown')
+    if not context.args:
+         await context.bot.send_message(chat_id=update.effective_chat.id, text="💸 Usage: Reply to someone with `!pay <amount>`", parse_mode='Markdown')
          return
          
     try:
         amount = int(context.args[0])
     except ValueError:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Invalid amount.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Invalid amount. Use `!pay <amount>`")
         return
 
     if amount <= 0:
