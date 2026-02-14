@@ -3472,7 +3472,11 @@ if __name__ == '__main__':
         print("Please copy .env.example to .env and fill in your tokens.")
     else:
         # Initialize Telethon for username lookups
-        asyncio.run(init_telethon())
+        # Must use new_event_loop + set, NOT asyncio.run(), because run() closes
+        # the loop afterward and run_polling() needs an active loop.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(init_telethon())
         
         # Increase connection timeouts to handle slow networks/server lag
         request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
