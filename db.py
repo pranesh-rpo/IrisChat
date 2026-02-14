@@ -131,6 +131,59 @@ def init_db():
             )
         ''')
 
+        # Create notes table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notes (
+                chat_id INTEGER,
+                name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                author_id INTEGER,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (chat_id, name)
+            )
+        ''')
+
+        # Migration: Add antiflood and warn_action columns to mod_settings
+        for col, default in [
+            ('antiflood_enabled', '1'),
+            ('antiflood_threshold', '5'),
+            ('antiflood_timeframe', '5'),
+            ('antiflood_action', "'mute'"),
+            ('warn_action', "'ban'"),
+            ('warn_action_duration', '0'),
+        ]:
+            try:
+                cursor.execute(f'ALTER TABLE mod_settings ADD COLUMN {col} DEFAULT {default}')
+            except sqlite3.OperationalError:
+                pass
+
+        # Create marriages table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS marriages (
+                user1_id INTEGER,
+                user2_id INTEGER,
+                married_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user1_id, user2_id)
+            )
+        ''')
+
+        # Create badges table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS badges (
+                user_id INTEGER,
+                badge_name TEXT,
+                earned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, badge_name)
+            )
+        ''')
+
+        # Migration: Add welcome/goodbye columns to chat_settings
+        for col in ['welcome_msg', 'goodbye_msg']:
+            try:
+                cursor.execute(f'ALTER TABLE chat_settings ADD COLUMN {col} TEXT')
+            except sqlite3.OperationalError:
+                pass
+
         # Create users table for username lookup
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -198,8 +251,13 @@ def update_balance(user_id, amount, user_name=None):
         logging.error(f"Error updating balance: {e}")
         return 0
 
+VALID_COOLDOWN_ACTIONS = {"daily", "beg", "work", "rob"}
+
 def get_cooldown(user_id, action_type):
     """Get the timestamp of the last action."""
+    if action_type not in VALID_COOLDOWN_ACTIONS:
+        logging.error(f"Invalid cooldown action: {action_type}")
+        return None
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -213,6 +271,9 @@ def get_cooldown(user_id, action_type):
 
 def set_cooldown(user_id, action_type):
     """Update the timestamp for an action to now."""
+    if action_type not in VALID_COOLDOWN_ACTIONS:
+        logging.error(f"Invalid cooldown action: {action_type}")
+        return
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -388,21 +449,33 @@ def update_user_record(chat_id, user_id, username):
     except Exception as e:
         logging.error(f"Error updating user record: {e}")
 
+DEFAULT_MOD_SETTINGS = {
+    "auto_mod": 1, "warn_limit": 3, "ban_on_limit": 1,
+    "antiflood_enabled": 1, "antiflood_threshold": 5,
+    "antiflood_timeframe": 5, "antiflood_action": "mute",
+    "warn_action": "ban", "warn_action_duration": 0,
+}
+
 def get_mod_settings(chat_id):
     """Get moderation settings for a chat."""
     try:
         conn = sqlite3.connect(DB_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute('SELECT auto_mod, warn_limit, ban_on_limit FROM mod_settings WHERE chat_id = ?', (chat_id,))
+        cursor.execute('SELECT * FROM mod_settings WHERE chat_id = ?', (chat_id,))
         row = cursor.fetchone()
         conn.close()
         if row:
-            return dict(row)
-        return {"auto_mod": 1, "warn_limit": 3, "ban_on_limit": 1}
+            result = dict(row)
+            # Fill in defaults for any missing keys
+            for k, v in DEFAULT_MOD_SETTINGS.items():
+                if k not in result or result[k] is None:
+                    result[k] = v
+            return result
+        return dict(DEFAULT_MOD_SETTINGS)
     except Exception as e:
         logging.error(f"Error getting mod settings: {e}")
-        return {"auto_mod": 1, "warn_limit": 3, "ban_on_limit": 1}
+        return dict(DEFAULT_MOD_SETTINGS)
 
 # --- Filter & Health Functions ---
 
@@ -496,13 +569,18 @@ def get_chat_settings(chat_id):
         conn.close()
         if row:
             return dict(row)
-        return {"chat_id": chat_id, "mode": "normal", "persona_prompt": None}
+        return {"chat_id": chat_id, "mode": "normal", "persona_prompt": None, "privacy_mode": 0, "log_retention": 30}
     except Exception as e:
         logging.error(f"Error getting chat settings: {e}")
-        return {"chat_id": chat_id, "mode": "normal", "persona_prompt": None}
+        return {"chat_id": chat_id, "mode": "normal", "persona_prompt": None, "privacy_mode": 0, "log_retention": 30}
+
+VALID_CHAT_SETTING_COLUMNS = {"mode", "persona_prompt", "privacy_mode", "log_retention", "welcome_msg", "goodbye_msg"}
 
 def update_chat_setting(chat_id, key, value):
     """Update a specific chat setting."""
+    if key not in VALID_CHAT_SETTING_COLUMNS:
+        logging.error(f"Invalid chat setting key: {key}")
+        return False
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
@@ -587,20 +665,268 @@ def update_chat_mode(chat_id, mode, persona_prompt=None):
     except Exception as e:
         logging.error(f"Error updating chat mode: {e}")
 
-def get_chat_settings(chat_id):
-    """Get the current settings for a chat."""
+# --- Notes Functions ---
+
+def save_note(chat_id, name, content, author_id=None):
+    """Save or update a note for a chat."""
     try:
         conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute('SELECT mode, persona_prompt FROM chat_settings WHERE chat_id = ?', (chat_id,))
-        row = cursor.fetchone()
+        cursor.execute('''
+            INSERT INTO notes (chat_id, name, content, author_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id, name) DO UPDATE SET
+                content = excluded.content,
+                author_id = excluded.author_id,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (chat_id, name.lower(), content, author_id))
+        conn.commit()
         conn.close()
-        
-        if row:
-            return {"mode": row["mode"], "persona_prompt": row["persona_prompt"]}
-        else:
-            return {"mode": "normal", "persona_prompt": None}
+        return True
     except Exception as e:
-        logging.error(f"Error retrieving chat settings: {e}")
-        return {"mode": "normal", "persona_prompt": None}
+        logging.error(f"Error saving note: {e}")
+        return False
+
+def get_note(chat_id, name):
+    """Get a note by name for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT content FROM notes WHERE chat_id = ? AND name = ?', (chat_id, name.lower()))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        logging.error(f"Error getting note: {e}")
+        return None
+
+def get_all_notes(chat_id):
+    """Get all notes for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT name, content FROM notes WHERE chat_id = ? ORDER BY name', (chat_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logging.error(f"Error getting all notes: {e}")
+        return []
+
+def delete_note(chat_id, name):
+    """Delete a note by name for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM notes WHERE chat_id = ? AND name = ?', (chat_id, name.lower()))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        logging.error(f"Error deleting note: {e}")
+        return False
+
+# --- Anti-flood & Warn Action Functions ---
+
+def set_antiflood(chat_id, enabled=True, threshold=None, timeframe=None, action=None):
+    """Set anti-flood settings for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO mod_settings (chat_id) VALUES (?)', (chat_id,))
+
+        cursor.execute('UPDATE mod_settings SET antiflood_enabled = ? WHERE chat_id = ?', (1 if enabled else 0, chat_id))
+        if threshold is not None:
+            cursor.execute('UPDATE mod_settings SET antiflood_threshold = ? WHERE chat_id = ?', (threshold, chat_id))
+        if timeframe is not None:
+            cursor.execute('UPDATE mod_settings SET antiflood_timeframe = ? WHERE chat_id = ?', (timeframe, chat_id))
+        if action is not None:
+            cursor.execute('UPDATE mod_settings SET antiflood_action = ? WHERE chat_id = ?', (action, chat_id))
+
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error setting antiflood: {e}")
+        return False
+
+def set_warn_action(chat_id, action, duration=0):
+    """Set what happens when a user reaches the warn limit."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO mod_settings (chat_id) VALUES (?)', (chat_id,))
+        cursor.execute('UPDATE mod_settings SET warn_action = ?, warn_action_duration = ? WHERE chat_id = ?', (action, duration, chat_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error setting warn action: {e}")
+        return False
+
+# --- Marriage Functions ---
+
+def marry(user1_id, user2_id):
+    """Create a marriage between two users."""
+    try:
+        # Always store with smaller ID first for consistency
+        a, b = min(user1_id, user2_id), max(user1_id, user2_id)
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO marriages (user1_id, user2_id) VALUES (?, ?)', (a, b))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error creating marriage: {e}")
+        return False
+
+def divorce(user1_id, user2_id):
+    """End a marriage."""
+    try:
+        a, b = min(user1_id, user2_id), max(user1_id, user2_id)
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM marriages WHERE user1_id = ? AND user2_id = ?', (a, b))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        logging.error(f"Error divorcing: {e}")
+        return False
+
+def get_partner(user_id):
+    """Get the partner of a user (returns partner user_id or None)."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT user1_id, user2_id FROM marriages WHERE user1_id = ? OR user2_id = ?', (user_id, user_id))
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return result[1] if result[0] == user_id else result[0]
+        return None
+    except Exception as e:
+        logging.error(f"Error getting partner: {e}")
+        return None
+
+# --- Inventory Functions ---
+
+def get_inventory(user_id):
+    """Get user's inventory as a dict."""
+    import json
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT inventory FROM economy WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        if result and result[0]:
+            return json.loads(result[0])
+        return {}
+    except Exception as e:
+        logging.error(f"Error getting inventory: {e}")
+        return {}
+
+def add_item(user_id, item_name, quantity=1):
+    """Add an item to a user's inventory."""
+    import json
+    try:
+        inv = get_inventory(user_id)
+        inv[item_name] = inv.get(item_name, 0) + quantity
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO economy (user_id) VALUES (?)', (user_id,))
+        cursor.execute('UPDATE economy SET inventory = ? WHERE user_id = ?', (json.dumps(inv), user_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error adding item: {e}")
+        return False
+
+def remove_item(user_id, item_name, quantity=1):
+    """Remove an item from inventory. Returns True if successful."""
+    import json
+    try:
+        inv = get_inventory(user_id)
+        if item_name not in inv or inv[item_name] < quantity:
+            return False
+        inv[item_name] -= quantity
+        if inv[item_name] <= 0:
+            del inv[item_name]
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE economy SET inventory = ? WHERE user_id = ?', (json.dumps(inv), user_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error removing item: {e}")
+        return False
+
+def has_item(user_id, item_name):
+    """Check if user has an item."""
+    inv = get_inventory(user_id)
+    return inv.get(item_name, 0) > 0
+
+# --- Badge Functions ---
+
+def award_badge(user_id, badge_name):
+    """Award a badge to a user. Returns True if newly awarded."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO badges (user_id, badge_name) VALUES (?, ?)', (user_id, badge_name))
+        awarded = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return awarded
+    except Exception as e:
+        logging.error(f"Error awarding badge: {e}")
+        return False
+
+def get_badges(user_id):
+    """Get all badges for a user."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT badge_name, earned_at FROM badges WHERE user_id = ? ORDER BY earned_at', (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logging.error(f"Error getting badges: {e}")
+        return []
+
+# --- Welcome/Goodbye Functions ---
+
+VALID_CHAT_SETTING_COLUMNS_EXTENDED = {"welcome_msg", "goodbye_msg"}
+
+def get_welcome_msg(chat_id):
+    """Get welcome message for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT welcome_msg FROM chat_settings WHERE chat_id = ?', (chat_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        logging.error(f"Error getting welcome msg: {e}")
+        return None
+
+def get_goodbye_msg(chat_id):
+    """Get goodbye message for a chat."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT goodbye_msg FROM chat_settings WHERE chat_id = ?', (chat_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except Exception as e:
+        logging.error(f"Error getting goodbye msg: {e}")
+        return None

@@ -1612,6 +1612,159 @@ async def announce_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Failed to send announcement: {e}")
 
+# ==================== WELCOME / GOODBYE / SLOWMODE ====================
+
+async def setwelcome_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set a custom welcome message for new members."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can set welcome messages, cutie! 🥺")
+        return
+
+    chat_id = update.effective_chat.id
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `!setwelcome <message>`\n\n"
+            "**Placeholders:**\n"
+            "• `{name}` — Member's name\n"
+            "• `{group}` — Group name\n"
+            "• `{count}` — Member count\n\n"
+            "Example: `!setwelcome Welcome {name} to {group}! You're member #{count}!`\n\n"
+            "Use `!setwelcome off` to disable.",
+            parse_mode='Markdown'
+        )
+        return
+
+    if context.args[0].lower() == "off":
+        db.update_chat_setting(chat_id, "welcome_msg", None)
+        await update.message.reply_text("✅ Welcome messages disabled!")
+        return
+
+    welcome_text = " ".join(context.args)
+    db.update_chat_setting(chat_id, "welcome_msg", welcome_text)
+    await update.message.reply_text(f"✅ **Welcome message set!**\n\nPreview:\n{welcome_text}", parse_mode='Markdown')
+
+async def setgoodbye_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set a custom goodbye message."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can set goodbye messages, cutie! 🥺")
+        return
+
+    chat_id = update.effective_chat.id
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `!setgoodbye <message>`\n\n"
+            "**Placeholders:** `{name}`, `{group}`\n\n"
+            "Use `!setgoodbye off` to disable.",
+            parse_mode='Markdown'
+        )
+        return
+
+    if context.args[0].lower() == "off":
+        db.update_chat_setting(chat_id, "goodbye_msg", None)
+        await update.message.reply_text("✅ Goodbye messages disabled!")
+        return
+
+    goodbye_text = " ".join(context.args)
+    db.update_chat_setting(chat_id, "goodbye_msg", goodbye_text)
+    await update.message.reply_text(f"✅ **Goodbye message set!**\n\nPreview:\n{goodbye_text}", parse_mode='Markdown')
+
+async def welcome_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle new members joining the group."""
+    if not update.message or not update.message.new_chat_members:
+        return
+
+    chat_id = update.effective_chat.id
+    chat = update.effective_chat
+
+    welcome_msg = db.get_welcome_msg(chat_id)
+
+    for member in update.message.new_chat_members:
+        if member.is_bot:
+            continue
+
+        # Track the user
+        db.track_user(member.id, member.username, member.first_name)
+
+        if welcome_msg:
+            try:
+                member_count = await context.bot.get_chat_member_count(chat_id)
+            except Exception:
+                member_count = "?"
+
+            text = welcome_msg.replace("{name}", member.first_name)
+            text = text.replace("{group}", chat.title or "the group")
+            text = text.replace("{count}", str(member_count))
+        else:
+            text = f"Welcome to the group, **{member.first_name}**! 💖✨\nHope you have a great time here~"
+
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+
+async def goodbye_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle members leaving the group."""
+    if not update.message or not update.message.left_chat_member:
+        return
+
+    chat_id = update.effective_chat.id
+    chat = update.effective_chat
+    member = update.message.left_chat_member
+
+    if member.is_bot:
+        return
+
+    goodbye_msg = db.get_goodbye_msg(chat_id)
+
+    if goodbye_msg:
+        text = goodbye_msg.replace("{name}", member.first_name)
+        text = text.replace("{group}", chat.title or "the group")
+    else:
+        return  # No default goodbye — only send if configured
+
+    await context.bot.send_message(chat_id=chat_id, text=text, parse_mode='Markdown')
+
+async def slowmode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set or disable slowmode."""
+    if not await is_admin(update, context):
+        await update.message.reply_text("Only admins can set slowmode, cutie! 🥺")
+        return
+
+    chat_id = update.effective_chat.id
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `!slowmode <seconds>`\n"
+            "Example: `!slowmode 10` (10 second delay)\n"
+            "Use `!slowmode off` or `!slowmode 0` to disable.",
+            parse_mode='Markdown'
+        )
+        return
+
+    arg = context.args[0].lower()
+
+    if arg in ["off", "0"]:
+        try:
+            await context.bot.set_chat_slow_mode_delay(chat_id, 0)
+            await update.message.reply_text("✅ Slowmode disabled! Everyone can chat freely~ ✨")
+            db.log_admin_action(chat_id, update.effective_user.id, "slowmode", reason="off")
+        except Exception as e:
+            await update.message.reply_text(f"Failed to disable slowmode: {e}")
+        return
+
+    try:
+        seconds = int(arg)
+        if seconds < 0 or seconds > 3600:
+            await update.message.reply_text("Slowmode must be between 0 and 3600 seconds! 🥺")
+            return
+
+        await context.bot.set_chat_slow_mode_delay(chat_id, seconds)
+        await update.message.reply_text(f"✅ **Slowmode set to {seconds} seconds!** 🐌")
+        db.log_admin_action(chat_id, update.effective_user.id, "slowmode", reason=f"{seconds}s")
+    except ValueError:
+        await update.message.reply_text("Please provide a valid number! 🥺")
+    except Exception as e:
+        await update.message.reply_text(f"Failed to set slowmode: {e}")
+
 async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Display group rules"""
     chat_id = update.effective_chat.id
@@ -1724,30 +1877,30 @@ async def groupstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cursor = conn.cursor()
         
         # Total messages logged
-        cursor.execute('SELECT COUNT(*) FROM chat_history WHERE chat_id = ?', (chat_id,))
+        cursor.execute('SELECT COUNT(*) FROM messages WHERE chat_id = ?', (chat_id,))
         total_messages = cursor.fetchone()[0]
-        
-        # Unique users
-        cursor.execute('SELECT COUNT(DISTINCT user_id) FROM chat_history WHERE chat_id = ?', (chat_id,))
+
+        # Unique users (from sender_name)
+        cursor.execute('SELECT COUNT(DISTINCT sender_name) FROM messages WHERE chat_id = ? AND sender_name IS NOT NULL', (chat_id,))
         unique_users = cursor.fetchone()[0]
-        
-        # Top 5 most active users
+
+        # Top 5 most active users (by sender_name since messages table doesn't have user_id)
         cursor.execute('''
-            SELECT user_id, COUNT(*) as msg_count 
-            FROM chat_history 
-            WHERE chat_id = ? 
-            GROUP BY user_id 
-            ORDER BY msg_count DESC 
+            SELECT sender_name, COUNT(*) as msg_count
+            FROM messages
+            WHERE chat_id = ? AND sender_name IS NOT NULL
+            GROUP BY sender_name
+            ORDER BY msg_count DESC
             LIMIT 5
         ''', (chat_id,))
         top_users = cursor.fetchall()
-        
+
         # Admin actions count
         cursor.execute('SELECT COUNT(*) FROM admin_actions WHERE chat_id = ?', (chat_id,))
         admin_actions = cursor.fetchone()[0]
-        
+
         # Total warns
-        cursor.execute('SELECT COUNT(*) FROM warns WHERE chat_id = ?', (chat_id,))
+        cursor.execute('SELECT COALESCE(SUM(warns), 0) FROM moderation WHERE chat_id = ?', (chat_id,))
         total_warns = cursor.fetchone()[0]
         
         conn.close()
@@ -1766,12 +1919,7 @@ async def groupstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         if top_users:
             msg += f"**🏆 Top Chatters:**\n"
-            for i, (user_id, msg_count) in enumerate(top_users, 1):
-                try:
-                    user = await context.bot.get_chat_member(chat_id, user_id)
-                    name = user.user.first_name
-                except:
-                    name = f"User {user_id}"
+            for i, (name, msg_count) in enumerate(top_users, 1):
                 msg += f"{i}. {name}: {msg_count} messages\n"
         
         await update.message.reply_text(msg, parse_mode='Markdown')
@@ -2062,6 +2210,18 @@ async def simprate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+def clean_ai_reply(reply):
+    """Clean up AI response prefixes without being too aggressive."""
+    if not reply:
+        return reply
+    # Remove [Name]: or [Name] prefix at start
+    reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
+    # Only strip known bot-name prefixes, not arbitrary "word:" patterns
+    reply = re.sub(r'^(?:Iris|iris|IRIS)\s*:\s*', '', reply)
+    # Remove brackets around names in the middle of sentences
+    reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
+    return reply.strip()
+
 def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYSTEM_PROMPT_GROUP):
     try:
         # Format history to include names
@@ -2085,10 +2245,13 @@ def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYS
             
         messages.append({"role": "user", "content": current_content})
 
-        if not groq_client:
+        # Rotate keys per request for load balancing
+        current_key = get_random_key(GROQ_API_KEY) if GROQ_API_KEY else None
+        client = Groq(api_key=current_key) if current_key else groq_client
+        if not client:
             raise Exception("Groq client not initialized")
 
-        completion = groq_client.chat.completions.create(
+        completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
             temperature=0.9,
@@ -2099,18 +2262,8 @@ def get_groq_response_sync(user_text, history, user_name=None, system_prompt=SYS
         )
         reply = completion.choices[0].message.content
         
-        # Clean up any potential self-prefixing (e.g., "[Iris]:", "Iris:", "[Character]:")
         if reply:
-            # Regex to remove anything looking like "[Name]: " or "Name: " or "[Name] " at the start
-            reply = re.sub(r'^\[.*?\]:?\s*', '', reply) # Remove [Name]: or [Name]
-            reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
-            
-            # Specific Iris cleanup just in case
-            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-
-            # New: Remove brackets around names in the middle of sentences
-            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
-            
+            reply = clean_ai_reply(reply)
         return reply
     except Exception as e:
         logging.error(f"Groq API Error: {e}")
@@ -2122,7 +2275,10 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
         # Convert history to Gemini format if needed, but the new SDK is flexible.
         # Simple content generation:
         
-        if not gemini_client:
+        # Rotate keys per request for load balancing
+        current_key = get_random_key(GEMINI_API_KEY) if GEMINI_API_KEY else None
+        client = genai.Client(api_key=current_key) if current_key else gemini_client
+        if not client:
             raise Exception("Gemini client not initialized")
 
         full_prompt = f"{system_prompt}\n\n"
@@ -2140,20 +2296,14 @@ async def get_gemini_response(user_text, history, user_name=None, system_prompt=
         else:
             full_prompt += f"{user_text}\n"
 
-        response = gemini_client.models.generate_content(
+        response = client.models.generate_content(
             model='gemini-2.0-flash', 
             contents=full_prompt
         )
         reply = response.text
 
-        # Clean up
         if reply:
-            reply = re.sub(r'^\[.*?\]:?\s*', '', reply) # Remove [Name]: or [Name]
-            reply = re.sub(r'^\w+:\s*', '', reply)      # Remove Name:
-            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-            # New: Remove brackets around names in the middle of sentences
-            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
-            
+            reply = clean_ai_reply(reply)
         return reply
     except Exception as e:
         logging.error(f"Gemini API Error: {e}")
@@ -2196,16 +2346,10 @@ def get_ollama_response_sync(user_text, history, user_name=None, system_prompt=S
         result = response.json()
         reply = result.get("message", {}).get("content", "")
         
-        # Clean up
         if reply:
-            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
-            reply = re.sub(r'^\w+:\s*', '', reply)
-            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-            # New: Remove brackets around names in the middle of sentences (e.g. "Hi [Norz]" -> "Hi Norz")
-            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
-            
+            reply = clean_ai_reply(reply)
         return reply
-        
+
     except Exception as e:
         logging.error(f"Ollama API Error: {e}")
         return None
@@ -2244,16 +2388,10 @@ async def get_mistral_response(user_text, history, user_name=None, system_prompt
         
         reply = completion.choices[0].message.content
         
-        # Clean up
         if reply:
-            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
-            reply = re.sub(r'^\w+:\s*', '', reply)
-            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-            # New: Remove brackets around names in the middle of sentences
-            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
-            
+            reply = clean_ai_reply(reply)
         return reply
-        
+
     except Exception as e:
         logging.error(f"Mistral API Error: {e}")
         return None
@@ -2304,16 +2442,10 @@ def get_openrouter_response_sync(user_text, history, user_name=None, system_prom
         result = response.json()
         reply = result['choices'][0]['message']['content']
         
-        # Clean up
         if reply:
-            reply = re.sub(r'^\[.*?\]:?\s*', '', reply)
-            reply = re.sub(r'^\w+:\s*', '', reply)
-            reply = reply.replace("[Iris]:", "").replace("Iris:", "").strip()
-            # New: Remove brackets around names in the middle of sentences
-            reply = re.sub(r'\[([^\]]+)\]', r'\1', reply)
-            
+            reply = clean_ai_reply(reply)
         return reply
-        
+
     except Exception as e:
         logging.error(f"OpenRouter API Error: {e}")
         return None
@@ -2635,13 +2767,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "!trivia": game_trivia, "!help": help_command, "!mhelp": mhelp_command,
         "!balance": economy.balance, "!bal": economy.balance, "!beg": economy.beg,
         "!daily": economy.daily, "!gamble": economy.gamble, "!bet": economy.gamble,
-        "!pay": economy.pay, "!rich": economy.leaderboard,
+        "!pay": economy.pay, "!rich": economy.leaderboard, "!leaderboard": economy.leaderboard,
         "!warn": warn_command, "!mute": mute_command, "!unmute": unmute_command,
         "!ban": ban_command, "!unban": unban_command, "!kick": kick_command, "!purge": purge_command,
         "!filter": filter_command, "!stats": stats_command, "!lock": lock_command, "!unlock": unlock_command,
         "!privacy": privacy_command, "!export": export_command,
         "!import": import_command, "!retention": retention_command,
-        "!admincheck": admincheck_command,
+        "!admincheck": admincheck_command, "!setwarnaction": setwarnaction_command,
+        "!antiflood": antiflood_command, "!pin": pin_command, "!unpin": unpin_command,
+        "!promote": promote_command, "!demote": demote_command, "!announce": announce_command,
+        "!report": report_command, "!rules": rules_command, "!setrules": setrules_command,
+        "!note": note_command, "!notes": notes_command, "!savenote": savenote_command,
+        "!delnote": delnote_command, "!groupstats": groupstats_command, "!qr": qr_command,
+        # New fun commands
+        "!coinflip": coinflip_command, "!flip": coinflip_command,
+        "!wyr": wyr_command, "!wouldyourather": wyr_command,
+        "!compliment": compliment_command, "!quote": quote_command,
+        "!hack": hack_command, "!fight": fight_command,
+        "!marry": marry_command, "!divorce": divorce_command,
+        "!hug": hug_command, "!slap": slap_command, "!pat": pat_command,
+        "!choose": choose_command, "!reverse": reverse_command,
+        # New economy commands
+        "!work": economy.work, "!rob": economy.rob, "!slots": economy.slots,
+        "!shop": economy.shop, "!buy": economy.buy, "!inventory": economy.inventory,
+        "!inv": economy.inventory, "!badges": economy.badges_command,
+        # New moderation commands
+        "!setwelcome": setwelcome_command, "!setgoodbye": setgoodbye_command,
+        "!slowmode": slowmode_command,
     }
     for cmd, handler in bang_commands.items():
         if lower_text == cmd or lower_text.startswith(cmd + " "):
@@ -2685,6 +2837,400 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message_id=update.message.message_id
         )
 
+# ==================== NEW FUN COMMANDS ====================
+
+async def coinflip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Flip a coin, optionally bet coins."""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    result = random.choice(["Heads", "Tails"])
+    emoji = "🪙" if result == "Heads" else "🔄"
+
+    # Optional betting
+    if context.args:
+        guess = context.args[0].lower()
+        if guess not in ["heads", "tails", "h", "t"]:
+            await context.bot.send_message(chat_id=chat_id, text="Usage: `!coinflip [heads/tails] [amount]`", parse_mode='Markdown')
+            return
+
+        guess_full = "Heads" if guess in ["heads", "h"] else "Tails"
+        amount = 0
+        if len(context.args) > 1:
+            try:
+                bal = db.get_balance(user_id)
+                bet_str = context.args[1].lower()
+                amount = bal if bet_str == "all" else int(bet_str)
+                if amount <= 0 or amount > bal:
+                    await context.bot.send_message(chat_id=chat_id, text=f"❌ Invalid bet! Balance: {bal} 🌸")
+                    return
+            except ValueError:
+                pass
+
+        if amount > 0:
+            if guess_full == result:
+                db.update_balance(user_id, amount)
+                await context.bot.send_message(chat_id=chat_id, text=f"{emoji} **{result}!** You guessed right and won **{amount}** 🌸! 🎉", parse_mode='Markdown')
+            else:
+                db.update_balance(user_id, -amount)
+                await context.bot.send_message(chat_id=chat_id, text=f"{emoji} **{result}!** Wrong guess~ Lost **{amount}** 🌸 😢", parse_mode='Markdown')
+            return
+
+    await context.bot.send_message(chat_id=chat_id, text=f"{emoji} **{result}!**", parse_mode='Markdown')
+
+async def wyr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Would You Rather — AI generated."""
+    chat_id = update.effective_chat.id
+    response = await get_ai_response(chat_id, "Give me a fun, creative 'Would You Rather' question with two options. Format: Would you rather A or B? Keep it clean and fun.", user_name="GameMaster", chat_type="game")
+    await context.bot.send_message(chat_id=chat_id, text=f"🤔 **Would You Rather?**\n\n{response}", parse_mode='Markdown')
+
+async def compliment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Give someone a cute compliment."""
+    chat_id = update.effective_chat.id
+
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    elif context.args:
+        target = " ".join(context.args)
+    else:
+        target = update.effective_user.first_name
+
+    compliments = [
+        f"{target}, you're literally the main character and everyone knows it~ 👑✨",
+        f"If {target} was a star, they'd be the sun because everything revolves around them~ ☀️💖",
+        f"{target} is the type of person who makes the world better just by existing~ 🌸",
+        f"Honestly? {target}'s vibe is immaculate. Like, chef's kiss~ 🤌✨",
+        f"{target} walked in and suddenly everything got 10x better~ 💕",
+        f"If kindness was a person, it would be {target}~ 🥹💖",
+        f"{target} has the energy of a warm hug on a cold day~ 🤗✨",
+        f"The world doesn't deserve {target}, but we're so lucky to have them~ 🌟",
+        f"{target}'s smile could literally power a whole city~ ⚡💖",
+        f"I genuinely believe {target} was sprinkled with extra magic at birth~ ✨🧚",
+        f"{target} is proof that angels walk among us~ 👼💕",
+        f"Being around {target} is like finding a four-leaf clover every single day~ 🍀💖",
+    ]
+
+    await context.bot.send_message(chat_id=chat_id, text=f"💖 {random.choice(compliments)}")
+
+async def quote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Random inspirational/funny quote."""
+    chat_id = update.effective_chat.id
+    quotes = [
+        ("The only way to do great work is to love what you do.", "Steve Jobs"),
+        ("Be yourself; everyone else is already taken.", "Oscar Wilde"),
+        ("In three words I can sum up everything I've learned about life: it goes on.", "Robert Frost"),
+        ("The future belongs to those who believe in the beauty of their dreams.", "Eleanor Roosevelt"),
+        ("It is during our darkest moments that we must focus to see the light.", "Aristotle"),
+        ("Do what you can, with what you have, where you are.", "Theodore Roosevelt"),
+        ("Believe you can and you're halfway there.", "Theodore Roosevelt"),
+        ("The best time to plant a tree was 20 years ago. The second best time is now.", "Chinese Proverb"),
+        ("You miss 100% of the shots you don't take.", "Wayne Gretzky"),
+        ("Life is what happens when you're busy making other plans.", "John Lennon"),
+        ("Stay hungry, stay foolish.", "Steve Jobs"),
+        ("It always seems impossible until it's done.", "Nelson Mandela"),
+        ("Not all those who wander are lost.", "J.R.R. Tolkien"),
+        ("The only limit to our realization of tomorrow is our doubts of today.", "Franklin D. Roosevelt"),
+        ("Dream big. Start small. Act now.", "Robin Sharma"),
+    ]
+    text, author = random.choice(quotes)
+    await context.bot.send_message(chat_id=chat_id, text=f"💬 _{text}_\n\n— **{author}** ✨", parse_mode='Markdown')
+
+async def hack_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fake 'hacking' someone with funny stages."""
+    chat_id = update.effective_chat.id
+
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    elif context.args:
+        target = " ".join(context.args)
+    else:
+        target = update.effective_user.first_name
+
+    stages = [
+        f"🔓 Hacking {target}...",
+        "📡 Connecting to mainframe... [██░░░░░░░░] 20%",
+        "🔍 Bypassing firewall... [████░░░░░░] 40%",
+        "💾 Downloading browser history... [██████░░░░] 60%",
+        "📂 Reading messages... [████████░░] 80%",
+        "🔐 Cracking password... [██████████] 100%",
+    ]
+
+    msg = await context.bot.send_message(chat_id=chat_id, text=stages[0])
+
+    for stage in stages[1:]:
+        await asyncio.sleep(1.2)
+        try:
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text=stage)
+        except Exception:
+            pass
+
+    await asyncio.sleep(1)
+
+    findings = [
+        f"browser history: 99% cat videos 🐱",
+        f"most used emoji: 🥺",
+        f"last Google search: 'how to be cool'",
+        f"secret playlist: 100% Taylor Swift 🎵",
+        f"screen time: 14 hours today 📱",
+        f"Discord status: invisible but online 👀",
+        f"Crush's name found: [REDACTED] 😳",
+        f"most visited site: reddit.com/r/memes 💀",
+    ]
+
+    final = f"✅ **Hack complete on {target}!**\n\n📋 **Findings:**\n• {random.choice(findings)}\n• {random.choice(findings)}\n• Password: ••••••• (jk~ 😂)\n\n_This was totally a joke~ 💖_"
+
+    try:
+        await context.bot.edit_message_text(chat_id=chat_id, message_id=msg.message_id, text=final, parse_mode='Markdown')
+    except Exception:
+        await context.bot.send_message(chat_id=chat_id, text=final, parse_mode='Markdown')
+
+async def fight_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fight someone with random outcomes."""
+    chat_id = update.effective_chat.id
+    user_name = update.effective_user.first_name
+
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    elif context.args:
+        target = " ".join(context.args)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="Reply to someone or use `!fight <name>` to fight them! ⚔️", parse_mode='Markdown')
+        return
+
+    attacks = [
+        (f"🗡️ {user_name} slashed {target} with a diamond sword!", 30),
+        (f"🔥 {user_name} used Fireball! It's super effective!", 40),
+        (f"👊 {user_name} landed a critical punch on {target}!", 25),
+        (f"🏹 {user_name} sniped {target} from across the map!", 35),
+        (f"💥 {user_name} used Kamehameha on {target}!", 50),
+        (f"🪃 {user_name} threw a boomerang at {target}!", 20),
+        (f"🐍 {user_name} sent a snake at {target}!", 15),
+        (f"⚡ {user_name} used Thunder Shock on {target}!", 45),
+    ]
+
+    defenses = [
+        (f"🛡️ {target} blocked with a shield!", 20),
+        (f"🏃 {target} dodged like a ninja!", 30),
+        (f"💨 {target} used Smoke Bomb and vanished!", 25),
+        (f"🪨 {target} hid behind a rock!", 10),
+        (f"🧊 {target} froze {user_name} with an ice spell!", 35),
+    ]
+
+    counters = [
+        f"💀 {target} pulled out an UNO reverse card!",
+        f"😎 {target} reflected the attack back!",
+        f"🤺 {target} parried perfectly!",
+    ]
+
+    user_hp = 100
+    target_hp = 100
+    log = f"⚔️ **{user_name} vs {target}** ⚔️\n\n"
+
+    for _round in range(3):
+        # User attacks
+        atk_text, atk_dmg = random.choice(attacks)
+        # Target defends sometimes
+        if random.random() < 0.3:
+            def_text, def_block = random.choice(defenses)
+            atk_dmg = max(0, atk_dmg - def_block)
+            log += f"{atk_text}\n{def_text} (-{def_block} blocked)\n"
+        else:
+            log += f"{atk_text}\n"
+        target_hp -= atk_dmg
+
+        # Counter chance
+        if random.random() < 0.15:
+            counter_dmg = random.randint(10, 30)
+            log += f"{random.choice(counters)} (-{counter_dmg} HP to {user_name})\n"
+            user_hp -= counter_dmg
+
+        log += "\n"
+
+    # Determine winner
+    if target_hp <= user_hp:
+        log += f"🏆 **{user_name} WINS!** 🎉\n"
+        log += f"_{user_name}: {max(0, user_hp)} HP | {target}: {max(0, target_hp)} HP_"
+        # Badge
+        if update.effective_user:
+            db.award_badge(update.effective_user.id, "Fighter")
+    else:
+        log += f"🏆 **{target} WINS!** 🎉\n"
+        log += f"_{user_name}: {max(0, user_hp)} HP | {target}: {max(0, target_hp)} HP_"
+
+    await context.bot.send_message(chat_id=chat_id, text=log, parse_mode='Markdown')
+
+async def marry_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Marry someone (reply to them)."""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    user_name = update.effective_user.first_name
+
+    if not update.message.reply_to_message or not update.message.reply_to_message.from_user:
+        await context.bot.send_message(chat_id=chat_id, text="Reply to someone to propose to them! 💍", parse_mode='Markdown')
+        return
+
+    target = update.message.reply_to_message.from_user
+    if target.id == user_id:
+        await context.bot.send_message(chat_id=chat_id, text="You can't marry yourself, silly! 😭")
+        return
+    if target.is_bot:
+        await context.bot.send_message(chat_id=chat_id, text="You can't marry a bot! ...unless? 🤖💕")
+        return
+
+    # Check if either is already married
+    existing1 = db.get_partner(user_id)
+    existing2 = db.get_partner(target.id)
+    if existing1:
+        await context.bot.send_message(chat_id=chat_id, text="You're already married! Use `!divorce` first~ 💔", parse_mode='Markdown')
+        return
+    if existing2:
+        await context.bot.send_message(chat_id=chat_id, text=f"{target.first_name} is already taken! 💔")
+        return
+
+    if db.marry(user_id, target.id):
+        db.award_badge(user_id, "Married")
+        db.award_badge(target.id, "Married")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"💒 **{user_name} and {target.first_name} are now married!!** 💍💕\n\nCongrats to the happy couple~ 🎉🥂✨",
+            parse_mode='Markdown'
+        )
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="Something went wrong with the wedding! 😢")
+
+async def divorce_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Divorce your partner."""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+
+    partner_id = db.get_partner(user_id)
+    if not partner_id:
+        await context.bot.send_message(chat_id=chat_id, text="You're not married to anyone! 🥺")
+        return
+
+    if db.divorce(user_id, partner_id):
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"💔 **{update.effective_user.first_name}** filed for divorce... It's over. 😢\n\n_Sometimes love just isn't enough~_",
+            parse_mode='Markdown'
+        )
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="Couldn't process the divorce! 😢")
+
+async def action_command(update: Update, context: ContextTypes.DEFAULT_TYPE, action_type="hug"):
+    """Generic action command (hug/slap/pat)."""
+    chat_id = update.effective_chat.id
+    user_name = update.effective_user.first_name
+
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user.first_name
+    elif context.args:
+        target = " ".join(context.args)
+    else:
+        target = "themselves"
+
+    actions = {
+        "hug": {
+            "emoji": "🤗",
+            "messages": [
+                f"**{user_name}** gives **{target}** a warm hug~ 🤗💖",
+                f"**{user_name}** hugged **{target}** tightly! So cute~ 🥹💕",
+                f"**{user_name}** wraps **{target}** in a big bear hug! 🧸💖",
+            ]
+        },
+        "slap": {
+            "emoji": "👋",
+            "messages": [
+                f"**{user_name}** slapped **{target}**! 👋💥",
+                f"**{user_name}** gave **{target}** a dramatic slap! 😤✋",
+                f"**{user_name}** bonked **{target}** on the head! 🔨",
+            ]
+        },
+        "pat": {
+            "emoji": "🥰",
+            "messages": [
+                f"**{user_name}** pats **{target}** on the head~ 🥰✨",
+                f"**{user_name}** gave **{target}** gentle headpats~ 💖",
+                f"*pat pat pat* Good {target}~ 🥹💕",
+            ]
+        },
+    }
+
+    data = actions.get(action_type, actions["hug"])
+    await context.bot.send_message(chat_id=chat_id, text=random.choice(data["messages"]), parse_mode='Markdown')
+
+async def hug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await action_command(update, context, "hug")
+
+async def slap_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await action_command(update, context, "slap")
+
+async def pat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await action_command(update, context, "pat")
+
+async def choose_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pick between options (separated by 'or')."""
+    chat_id = update.effective_chat.id
+
+    if not context.args:
+        await context.bot.send_message(chat_id=chat_id, text="Usage: `!choose pizza or burger or sushi`", parse_mode='Markdown')
+        return
+
+    text = " ".join(context.args)
+    options = [o.strip() for o in text.split(" or ") if o.strip()]
+
+    if len(options) < 2:
+        # Try comma separation
+        options = [o.strip() for o in text.split(",") if o.strip()]
+
+    if len(options) < 2:
+        await context.bot.send_message(chat_id=chat_id, text="Give me at least 2 options! Separate with `or` or `,`", parse_mode='Markdown')
+        return
+
+    choice = random.choice(options)
+    await context.bot.send_message(chat_id=chat_id, text=f"🤔 Hmm... I choose **{choice}**! ✨", parse_mode='Markdown')
+
+async def reverse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reverse text."""
+    chat_id = update.effective_chat.id
+
+    if update.message.reply_to_message and update.message.reply_to_message.text:
+        text = update.message.reply_to_message.text
+    elif context.args:
+        text = " ".join(context.args)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="Reply to a message or do `!reverse your text here`~", parse_mode='Markdown')
+        return
+
+    reversed_text = text[::-1]
+    await context.bot.send_message(chat_id=chat_id, text=f"🔄 {reversed_text}")
+
+async def qr_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Generate a QR code from text"""
+    if not context.args:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Usage: `!qr <text or URL>`\nExample: `!qr https://example.com`",
+            parse_mode='Markdown'
+        )
+        return
+
+    text = " ".join(context.args)
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    bio = io.BytesIO()
+    img.save(bio, 'PNG')
+    bio.seek(0)
+
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=bio,
+        caption=f"Here's your QR code~ 💖"
+    )
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User help - General commands for everyone"""
     help_text = """
@@ -2695,57 +3241,68 @@ Hii~ here's everything I can do! 💖
 🤖 **Chatting with Me**
 - Mention `@Iris` or reply to my messages to chat!
 - In DMs, I'm always listening~ 💕
-- Use `!reset` to clear conversation memory
-- Use `!roleplay <scenario>` to make me act as any character!
-- Use `!normal` to return me to my cute self~
+- `!reset` - Clear conversation memory
+- `!roleplay <scenario>` - Act as any character!
+- `!normal` - Return to normal Iris
 
 🎉 **Fun Commands**
-- `!meme` - Random meme from Reddit
-- `!roast [@user]` - Playful roast~ 🔥
-- `!ship [@user1] [@user2]` - Ship two people 💘
-- `!8ball <question>` - Magic 8-ball answers 🎱
-- `!uwu <text>` - UwUify any text~
-- `!rate <thing>` - Rate anything out of 10
-- `!vibe [@user]` - Vibe check someone ✨
-- `!pp [@user]` - The classic measurement 📏
-- `!howgay [@user]` - Gay meter 🏳️‍🌈
-- `!simprate [@user]` - Simp detector 🚨
+- `!meme` - Random meme 💀
+- `!roast [@user]` - Playful roast 🔥
+- `!ship <name1> <name2>` - Ship people 💘
+- `!8ball <question>` - Magic 8-ball 🎱
+- `!uwu <text>` - UwUify text~
+- `!rate <thing>` - Rate out of 10
+- `!vibe [@user]` - Vibe check ✨
+- `!pp` / `!howgay` / `!simprate` - Classic memes 💀
+- `!coinflip [heads/tails] [bet]` - Flip a coin 🪙
+- `!compliment [@user]` - Give compliments 💖
+- `!quote` - Inspirational quote 💬
+- `!hack [@user]` - Fake hack someone 🔓
+- `!fight [@user]` - Fight someone ⚔️
+- `!hug` / `!slap` / `!pat` - Actions 🤗
+- `!choose A or B` - Pick for you 🤔
+- `!reverse <text>` - Reverse text 🔄
+- `!wyr` - Would You Rather 🤔
+
+💍 **Social**
+- `!marry` - Propose (reply to someone) 💒
+- `!divorce` - End your marriage 💔
 
 💰 **Economy System**
-- `!balance` / `!bal` - Check your wallet 🌸
-- `!beg` - Beg for coins (sometimes works!)
-- `!daily` - Claim daily reward!
+- `!balance` / `!bal` - Check wallet 🌸
+- `!daily` - Daily reward (500 coins)
+- `!work` - Work a job (10m cooldown) 💼
+- `!beg` - Beg for coins (1m cooldown)
 - `!gamble <amount>` - Double or nothing 🎰
-- `!pay <@user> <amount>` - Send coins to friends
-- `!rich` / `!leaderboard` - Top richest users 👑
+- `!slots <amount>` - Slot machine 🎰
+- `!coinflip <h/t> <amount>` - Bet on a flip 🪙
+- `!rob` - Rob someone (reply) 🦹
+- `!pay <amount>` - Pay someone (reply) 💸
+- `!rich` / `!leaderboard` - Top users 👑
 
-🎭 **Roleplay Mode**
-- `!roleplay <scenario>` - Transform into any character!
-  Examples:
-  • `!roleplay You are a cat`
-  • `!roleplay Act as a pirate captain`
-  • `!roleplay You're a tsundere anime girl`
-- `!normal` - Return to normal Iris personality
+🏪 **Shop & Items**
+- `!shop` - View the item shop
+- `!buy <item>` - Purchase an item
+- `!inventory` / `!inv` - View your items 🎒
+- `!badges` - View your badges 🏅
 
 🎲 **Mini Games**
-- `!truth` - Get a truth question 👀
-- `!dare` - Get a dare challenge 🔥
-- `!trivia` - Test your knowledge 🧠
+- `!truth` - Truth question 👀
+- `!dare` - Dare challenge 🔥
+- `!trivia` - Trivia quiz 🧠
 
 ⚙️ **Utilities**
-- `!help` - Show this message
-- `!donate` - Support the server 🥺💖
+- `!help` - This message
+- `!donate` - Support the server 💖
 - `!qr <text>` - Generate QR code
 - `!rules` - View group rules 📜
-- `!note <name>` - View saved notes 📝
-- `!notes` - List all available notes
+- `!note <name>` / `!notes` - Saved notes 📝
 - `!groupstats` - Group statistics 📊
-- `!report [reason]` - Report a message to admins 🚨
+- `!report` - Report to admins 🚨
 
-🛡️ **For Admins**
-Type `!mhelp` to see all moderation commands!
+🛡️ **For Admins** - Type `!mhelp`
 
-Have fun chatting with me~ 🌸💖
+Have fun~ 🌸💖
 """
     await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
 
@@ -2852,17 +3409,43 @@ async def mhelp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
    • `!antiflood set <msgs> <secs> <action>` - Configure
    • Actions: warn, mute, kick, ban
 
+**WELCOME & GOODBYE**
+━━━━━━━━━━━━━━━━━
+👋 `!setwelcome <msg>` - Set welcome message
+   • Placeholders: `{name}`, `{group}`, `{count}`
+   • `!setwelcome off` - Disable
+
+👋 `!setgoodbye <msg>` - Set goodbye message
+   • Placeholders: `{name}`, `{group}`
+   • `!setgoodbye off` - Disable
+
+🐌 `!slowmode <seconds>` - Set chat slowmode
+   • `!slowmode off` - Disable
+
 **TIPS & BEST PRACTICES**
 ━━━━━━━━━━━━━━━━━
 ✅ Always set warn action: `!setwarnaction ban` or `mute 120`
 ✅ Use word filters for common spam/abuse
 ✅ Check admin activity weekly with `!admincheck`
 ✅ Export settings regularly as backup
+✅ Set welcome messages for new members
 ✅ Set retention to manage database size
 
 Need help? Tag an owner or check `!help` for user commands! 💕
 """
     await context.bot.send_message(chat_id=update.effective_chat.id, text=help_text, parse_mode='Markdown')
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Global error handler to log unhandled exceptions."""
+    logging.error(f"Unhandled exception: {context.error}", exc_info=context.error)
+    if update and hasattr(update, 'effective_chat') and update.effective_chat:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Oopsie~ something went wrong! 🥺 Try again later~ 💖"
+            )
+        except Exception:
+            pass
 
 async def init_telethon():
     """Initialize Telethon client for username lookups"""
@@ -2889,7 +3472,7 @@ if __name__ == '__main__':
         print("Please copy .env.example to .env and fill in your tokens.")
     else:
         # Initialize Telethon for username lookups
-        asyncio.get_event_loop().run_until_complete(init_telethon())
+        asyncio.run(init_telethon())
         
         # Increase connection timeouts to handle slow networks/server lag
         request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
@@ -2929,6 +3512,35 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('bet', economy.gamble))
         application.add_handler(CommandHandler('pay', economy.pay))
         application.add_handler(CommandHandler('rich', economy.leaderboard))
+        application.add_handler(CommandHandler('leaderboard', economy.leaderboard))
+        application.add_handler(CommandHandler('work', economy.work))
+        application.add_handler(CommandHandler('rob', economy.rob))
+        application.add_handler(CommandHandler('slots', economy.slots))
+        application.add_handler(CommandHandler('shop', economy.shop))
+        application.add_handler(CommandHandler('buy', economy.buy))
+        application.add_handler(CommandHandler('inventory', economy.inventory))
+        application.add_handler(CommandHandler('inv', economy.inventory))
+        application.add_handler(CommandHandler('badges', economy.badges_command))
+
+        # Utility Handlers
+        application.add_handler(CommandHandler('qr', qr_command))
+
+        # New Fun Command Handlers
+        application.add_handler(CommandHandler('coinflip', coinflip_command))
+        application.add_handler(CommandHandler('flip', coinflip_command))
+        application.add_handler(CommandHandler('wyr', wyr_command))
+        application.add_handler(CommandHandler('wouldyourather', wyr_command))
+        application.add_handler(CommandHandler('compliment', compliment_command))
+        application.add_handler(CommandHandler('quote', quote_command))
+        application.add_handler(CommandHandler('hack', hack_command))
+        application.add_handler(CommandHandler('fight', fight_command))
+        application.add_handler(CommandHandler('marry', marry_command))
+        application.add_handler(CommandHandler('divorce', divorce_command))
+        application.add_handler(CommandHandler('hug', hug_command))
+        application.add_handler(CommandHandler('slap', slap_command))
+        application.add_handler(CommandHandler('pat', pat_command))
+        application.add_handler(CommandHandler('choose', choose_command))
+        application.add_handler(CommandHandler('reverse', reverse_command))
 
         # Moderation Handlers
         application.add_handler(CommandHandler('warn', warn_command))
@@ -2962,6 +3574,13 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('savenote', savenote_command))
         application.add_handler(CommandHandler('delnote', delnote_command))
         application.add_handler(CommandHandler('groupstats', groupstats_command))
+        application.add_handler(CommandHandler('setwelcome', setwelcome_command))
+        application.add_handler(CommandHandler('setgoodbye', setgoodbye_command))
+        application.add_handler(CommandHandler('slowmode', slowmode_command))
+
+        # Welcome/Goodbye event handlers
+        application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_handler))
+        application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, goodbye_handler))
 
         # Schedule periodic cleanup (every 24 hours) if JobQueue is available
         if application.job_queue:
@@ -2972,6 +3591,9 @@ if __name__ == '__main__':
         application.add_handler(start_handler)
         application.add_handler(msg_handler)
         application.add_handler(edit_handler)
+
+        # Global error handler
+        application.add_error_handler(error_handler)
         
         providers_str = ", ".join(ENABLED_PROVIDERS) if ENABLED_PROVIDERS else "NO AI BRAIN"
         print(f"Iris is waking up with {providers_str}... ✨ Press Ctrl+C to stop.")
