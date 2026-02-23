@@ -2791,6 +2791,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "!work": economy.work, "!rob": economy.rob, "!slots": economy.slots,
         "!shop": economy.shop, "!buy": economy.buy, "!inventory": economy.inventory,
         "!inv": economy.inventory, "!badges": economy.badges_command,
+        "!use": economy.use_item, "!gift": economy.gift_item, "!profile": economy.profile_command,
         # New moderation commands
         "!setwelcome": setwelcome_command, "!setgoodbye": setgoodbye_command,
         "!slowmode": slowmode_command,
@@ -3284,6 +3285,9 @@ Hii~ here's everything I can do! 💖
 - `!shop` - View the item shop
 - `!buy <item>` - Purchase an item
 - `!inventory` / `!inv` - View your items 🎒
+- `!use <item>` - Use a consumable item 💊
+- `!gift <item>` - Gift an item (reply) 🎁
+- `!profile` - View your profile 👤
 - `!badges` - View your badges 🏅
 
 🎲 **Mini Games**
@@ -3525,6 +3529,9 @@ if __name__ == '__main__':
         application.add_handler(CommandHandler('inventory', economy.inventory))
         application.add_handler(CommandHandler('inv', economy.inventory))
         application.add_handler(CommandHandler('badges', economy.badges_command))
+        application.add_handler(CommandHandler('use', economy.use_item))
+        application.add_handler(CommandHandler('gift', economy.gift_item))
+        application.add_handler(CommandHandler('profile', economy.profile_command))
 
         # Utility Handlers
         application.add_handler(CommandHandler('qr', qr_command))
@@ -3601,4 +3608,4 @@ if __name__ == '__main__':
         
         providers_str = ", ".join(ENABLED_PROVIDERS) if ENABLED_PROVIDERS else "NO AI BRAIN"
         print(f"Iris is waking up with {providers_str}... ✨ Press Ctrl+C to stop.")
-        application.run_polling()
+        application.run_polling(drop_pending_updates=True)

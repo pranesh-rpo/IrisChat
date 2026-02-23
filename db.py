@@ -269,8 +269,8 @@ def get_cooldown(user_id, action_type):
         logging.error(f"Error getting cooldown: {e}")
         return None
 
-def set_cooldown(user_id, action_type):
-    """Update the timestamp for an action to now."""
+def set_cooldown(user_id, action_type, reset=False):
+    """Update the timestamp for an action to now, or reset it if reset=True."""
     if action_type not in VALID_COOLDOWN_ACTIONS:
         logging.error(f"Invalid cooldown action: {action_type}")
         return
@@ -278,8 +278,12 @@ def set_cooldown(user_id, action_type):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('INSERT OR IGNORE INTO economy (user_id) VALUES (?)', (user_id,))
-        now = datetime.now().isoformat()
-        cursor.execute(f'UPDATE economy SET last_{action_type} = ? WHERE user_id = ?', (now, user_id))
+        if reset:
+            # Set to NULL to clear the cooldown
+            cursor.execute(f'UPDATE economy SET last_{action_type} = NULL WHERE user_id = ?', (user_id,))
+        else:
+            now = datetime.now().isoformat()
+            cursor.execute(f'UPDATE economy SET last_{action_type} = ? WHERE user_id = ?', (now, user_id))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -930,3 +934,54 @@ def get_goodbye_msg(chat_id):
     except Exception as e:
         logging.error(f"Error getting goodbye msg: {e}")
         return None
+
+# --- Item Effects Functions ---
+
+def get_effect(user_id, effect_name):
+    """Get the remaining uses of an active effect."""
+    import json
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        # Store effects in a JSON column (we'll add it if needed)
+        cursor.execute('SELECT inventory FROM economy WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result and result[0]:
+            inv = json.loads(result[0])
+            # Store effects with a special prefix
+            effect_key = f"_effect_{effect_name}"
+            return inv.get(effect_key, 0)
+        return 0
+    except Exception as e:
+        logging.error(f"Error getting effect: {e}")
+        return 0
+
+def set_effect(user_id, effect_name, uses):
+    """Set the number of remaining uses for an effect."""
+    import json
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR IGNORE INTO economy (user_id) VALUES (?)', (user_id,))
+        cursor.execute('SELECT inventory FROM economy WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        
+        inv = {}
+        if result and result[0]:
+            inv = json.loads(result[0])
+        
+        effect_key = f"_effect_{effect_name}"
+        if uses > 0:
+            inv[effect_key] = uses
+        elif effect_key in inv:
+            del inv[effect_key]
+        
+        cursor.execute('UPDATE economy SET inventory = ? WHERE user_id = ?', (json.dumps(inv), user_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logging.error(f"Error setting effect: {e}")
+        return False
